@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
@@ -23,9 +24,12 @@ from ..schemas import (
     ServerGroup,
     ServerOut,
     ServerUpdate,
+    SshConfigHost,
+    SshConfigHosts,
 )
 from ..timeutil import as_utc
 from ..deployer import public_key
+from ..ssh_config import list_hosts
 from ..views import deploy_state, occupied_devices, server_out
 
 router = APIRouter(prefix="/api", tags=["servers"])
@@ -172,6 +176,7 @@ def _new_server(body: ServerCreate) -> Server:
     data = body.model_dump()
     data["name"] = (body.name or body.host).strip()
     data["ssh_user"] = (body.ssh_user or "").strip() or None
+    data["ssh_host"] = (body.ssh_host or "").strip() or None
     server = Server(**data)
     server.devices = []
     return server
@@ -244,6 +249,22 @@ def agent_package(request: Request, settings: Settings = Depends(get_settings)):
     )
 
 
+@router.get("/ssh-config", response_model=SshConfigHosts, summary="中心主机 ~/.ssh/config 中可导入的主机")
+def ssh_config_hosts(session: Session = Depends(get_session)):
+    path = Path.home() / ".ssh" / "config"
+    taken = set()
+    for name, host, ssh_host in session.execute(select(Server.name, Server.host, Server.ssh_host)):
+        taken.update(v for v in (name, host, ssh_host) if v)
+    hosts = [
+        SshConfigHost(
+            alias=h.alias, hostname=h.hostname, user=h.user, port=h.port,
+            added=bool({h.alias, h.hostname} & taken),
+        )
+        for h in list_hosts(path)
+    ]
+    return SshConfigHosts(path=str(path), hosts=hosts)
+
+
 @router.post("/servers/deploy", response_model=list[ServerOut], summary="批量安装或升级 Agent")
 async def deploy_servers(
     body: DeployRequest,
@@ -300,7 +321,7 @@ def update_server(
     for field, value in body.model_dump(exclude_unset=True).items():
         if field in ("name", "host", "port", "tags", "schedulable", "ssh_port", "allow_roots") and value is None:
             raise HTTPException(422, f"{field} 不能为空")
-        if field == "ssh_user":
+        if field in ("ssh_user", "ssh_host"):
             value = (value or "").strip() or None
         setattr(server, field, value)
     _commit(session)

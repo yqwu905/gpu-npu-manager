@@ -189,3 +189,13 @@ def test_eval_command_uses_agent_dir():
     evaluation = Evaluation(output_dir="/data/r1/eval/1", metrics=["psnr"], reference=None)
     command = build_command(Settings(eval_script=""), result, evaluation, "cpu")
     assert command.startswith('python3 "$GNM_AGENT_DIR/evaluate.py" --predictions /data/r1/')
+
+
+def test_ssh_target_uses_alias(tmp_path):
+    ssh = fake_ssh(tmp_path, f'cat > /dev/null; echo "$@" > "{tmp_path}/args"; exit 255')
+    with make_client(tmp_path, ssh_command=ssh) as client:
+        body = {"host": "10.0.1.5", "ssh_host": "gpu-05", "ssh_user": "alice", "ssh_port": 2222}
+        client.post("/api/servers", json=body)
+        wait_deploys(client)
+    args = (tmp_path / "args").read_text().split()
+    assert args[-3:] == ["alice@gpu-05", "bash", "-s"] and "2222" in args

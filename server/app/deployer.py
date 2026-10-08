@@ -229,6 +229,7 @@ class Deployer:
                 return None
             return (
                 server.host,
+                server.ssh_host or server.host,
                 server.port,
                 server.ssh_user,
                 server.ssh_port or 22,
@@ -258,7 +259,7 @@ class Deployer:
         target = await asyncio.to_thread(self._target, server_id)
         if target is None:
             return
-        host, port, ssh_user, ssh_port, allow_roots, version = target
+        host, ssh_host, port, ssh_user, ssh_port, allow_roots, version = target
         self._update(server_id, deploy_status="running", deploy_started_at=datetime.now(timezone.utc))
 
         env = {"GNM_AGENT_TOKEN": self.settings.agent_token, "GNM_AGENT_PORT": str(port)}
@@ -270,7 +271,7 @@ class Deployer:
             "-o", "StrictHostKeyChecking=accept-new",
             "-o", "ConnectTimeout=10",
             "-p", str(ssh_port),
-            f"{ssh_user}@{host}",
+            f"{ssh_user}@{ssh_host}",
             "bash -s",
         ]
         try:

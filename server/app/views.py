@@ -100,6 +100,7 @@ def server_out(
         deploy=deploy_state(server),
         ssh_user=server.ssh_user,
         ssh_port=server.ssh_port or 22,
+        ssh_host=server.ssh_host,
         allow_roots=server.allow_roots or [],
         host_info=server.host_info,
         last_seen_at=as_utc(server.last_seen_at),

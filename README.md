@@ -43,7 +43,7 @@ GNM_AGENT_TOKEN=<token> uvicorn app.main:create_app --factory --host 0.0.0.0 --p
 Agent 由中心服务通过 SSH 安装和升级，不需要登录各服务器操作：
 
 1. 在中心主机上准备 SSH 密钥（`ssh-keygen`），用 `ssh-copy-id <用户>@<服务器>` 把公钥分发到各服务器；页面“添加服务器”对话框里也会显示中心主机的公钥。
-2. 在“服务器”页点“添加服务器”，单台填写地址和 SSH 用户；或切到“批量”，每行一台：`[用户@]地址[:SSH端口] [名称]`。
+2. 在“服务器”页点“添加服务器”，单台填写地址和 SSH 用户；或切到“批量”，每行一台：`[用户@]地址[:SSH端口] [名称]`；或切到“从 SSH 配置导入”，勾选中心主机 `~/.ssh/config` 里的 Host。导入的服务器以 Host 别名作为名称和 SSH 连接目标，沿用 config 中的密钥、跳板机等设置，Agent 地址取 HostName。
 3. 中心服务登录后把 `agent.py`、`evaluate.py` 写到该用户的 `~/.gnm-agent/bin/`，启动 Agent 并用 crontab `@reboot` 设置开机自启。不需要 root，任务以该 SSH 用户运行。安装进度、错误和完整输出在服务器详情的“Agent”页。
 4. 中心服务升级后，版本落后的托管 Agent 会自动升级一次（`GNM_AUTO_UPGRADE=0` 可关闭）；也可以在页面上逐台或一键升级。升级只重启 Agent 进程，运行中的任务不受影响。
 

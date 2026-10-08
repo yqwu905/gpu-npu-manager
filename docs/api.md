@@ -14,7 +14,7 @@
 | 服务器列表（筛选） | `GET /api/servers`、`GET /api/meta/filters` |
 | 服务器分组视图 | `GET /api/servers/grouped?by=group\|owner\|tag\|accelerator\|model\|status` |
 | 服务器详情 | `GET /api/servers/{id}`、`GET /api/servers/{id}/history`、`POST /api/servers/{id}/refresh` |
-| 添加 / 编辑服务器 | `POST /api/servers`、`POST /api/servers/batch`、`GET /api/agent-package`、`PATCH /api/servers/{id}`、`DELETE /api/servers/{id}` |
+| 添加 / 编辑服务器 | `POST /api/servers`、`POST /api/servers/batch`、`GET /api/ssh-config`、`GET /api/agent-package`、`PATCH /api/servers/{id}`、`DELETE /api/servers/{id}` |
 | 安装 / 升级 Agent | `POST /api/servers/{id}/deploy`、`POST /api/servers/deploy`、`GET /api/servers/{id}/deploy` |
 | 任务队列 / 任务列表 | `GET /api/jobs`、`GET /api/scheduler`、`PATCH /api/scheduler` |
 | 提交任务 | `POST /api/jobs`（运行组候选值来自 `GET /api/meta/filters`） |
@@ -65,7 +65,7 @@
 {
   "id": 1, "name": "npu-01", "host": "10.0.0.11", "port": 9100,
   "group": "cv", "owner": "alice", "tags": ["910B", "lab1"], "note": null, "schedulable": true,
-  "ssh_user": "alice", "ssh_port": 22, "allow_roots": ["/data/results"],
+  "ssh_user": "alice", "ssh_port": 22, "ssh_host": null, "allow_roots": ["/data/results"],
   "accelerator": "npu", "status": "online", "hostname": "node11", "agent_version": "0.1.0+aabf8f791b",
   "agent_outdated": false, "managed": true,
   "deploy": {"status": "succeeded", "action": "install", "version": "0.1.0+aabf8f791b", "error": null,
@@ -95,6 +95,7 @@
 字段说明：
 
 - `status`：连续 3 次拉取失败判定为 `offline`，`last_error` 给出最后一次错误原因。
+- `ssh_host`：SSH 连接目标，可以是中心主机 `~/.ssh/config` 中的 Host 别名（沿用其中的密钥、跳板机等设置）；为 `null` 时用 `host`。
 - `managed`：填写了 `ssh_user`，由中心服务通过 SSH 安装和升级 Agent；任务以该用户运行。
 - `agent_version`：Agent 版本，`+` 后面是 agent.py 和 evaluate.py 的内容摘要；`agent_outdated` 表示与中心服务自带的版本不一致。
 - `deploy`：最近一次安装或升级，从未通过 SSH 部署过时为 `null`。`status` 为 `pending` / `running` / `succeeded` / `failed`，`action` 为 `install` / `upgrade`，失败原因在 `error`。
@@ -143,6 +144,18 @@
 ```json
 {"created": [ServerOut, ...], "errors": [{"index": 2, "host": "10.0.0.13", "error": "名称 npu-03 已存在"}]}
 ```
+
+### GET /api/ssh-config
+
+列出中心主机 `~/.ssh/config`（含 Include 的文件）中不含通配符的 Host，按 OpenSSH 规则取生效的地址、用户和端口（每个选项取第一个匹配的值，`Host *` 只补充前面没设置的；没有 User 时为中心服务的运行用户）。
+
+```json
+{"path": "/root/.ssh/config", "hosts": [
+  {"alias": "gpu-01", "hostname": "10.0.1.21", "user": "alice", "port": 22, "added": false}
+]}
+```
+
+`added` 表示名称、地址或 SSH 目标与已添加的服务器相同。导入时用 `{"name": alias, "host": hostname, "ssh_host": alias, "ssh_user": user, "ssh_port": port}` 调用批量添加。
 
 ### GET /api/agent-package
 

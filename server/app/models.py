@@ -25,6 +25,8 @@ class Server(Base):
 
     # SSH 登录信息，填写后由中心服务安装和升级 Agent；任务以该用户运行
     ssh_user: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # SSH 连接目标，可以是中心主机 ~/.ssh/config 中的别名（沿用其中的密钥、跳板机等设置），为空时用 host
+    ssh_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
     ssh_port: Mapped[int | None] = mapped_column(Integer, nullable=True, default=22)
     allow_roots: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)
     # 最近一次部署：pending / running / succeeded / failed

@@ -348,7 +348,7 @@ function AgentPanel({ s, onChanged }: { s: Server; onChanged: (s: Server | null)
   const rows: [string, ReactNode][] = [
     ['当前版本', <span className="mono">{s.agent_version ?? '未连通'}</span>],
     ['中心服务自带版本', <span className="mono">{pkg.data?.version ?? '-'}</span>],
-    ['管理方式', s.managed ? <span>中心服务通过 SSH 安装和升级（<span className="mono">{s.ssh_user}@{s.host}:{s.ssh_port}</span>）</span> : '手动安装'],
+    ['管理方式', s.managed ? <span>中心服务通过 SSH 安装和升级（<span className="mono">{s.ssh_user}@{s.ssh_host ?? s.host}:{s.ssh_port}</span>）</span> : '手动安装'],
     ['允许读取的目录', <span className="mono">{s.allow_roots.length ? s.allow_roots.join('、') : '登录用户家目录'}</span>],
   ]
   return (
@@ -449,6 +449,7 @@ function AttrForm({ s, groups, onSaved, onDeleted }: { s: Server; groups: string
   const [schedulable, setSchedulable] = useState(s.schedulable)
   const [sshUser, setSshUser] = useState(s.ssh_user ?? '')
   const [sshPort, setSshPort] = useState(String(s.ssh_port))
+  const [sshHost, setSshHost] = useState(s.ssh_host ?? '')
   const [port, setPort] = useState(String(s.port))
   const [roots, setRoots] = useState(s.allow_roots.join('\n'))
   const [err, setErr] = useState<string | null>(null)
@@ -464,7 +465,7 @@ function AttrForm({ s, groups, onSaved, onDeleted }: { s: Server; groups: string
     try {
       onSaved(await serversApi.update(s.id, {
         name, group: group || null, owner: owner || null, tags, note: note || null, schedulable,
-        ssh_user: sshUser.trim() || null, ssh_port: Number(sshPort) || 22, port: Number(port) || 9100,
+        ssh_user: sshUser.trim() || null, ssh_port: Number(sshPort) || 22, ssh_host: sshHost.trim() || null, port: Number(port) || 9100,
         allow_roots: roots.split('\n').map((r) => r.trim()).filter(Boolean),
       }))
       setOk(true)
@@ -510,6 +511,7 @@ function AttrForm({ s, groups, onSaved, onDeleted }: { s: Server; groups: string
         <label className="field" style={{ flex: '1 1 0' }}><span className="lbl">SSH 端口</span><input className="inp mono" value={sshPort} onChange={(e) => setSshPort(e.target.value)} inputMode="numeric" /></label>
         <label className="field" style={{ flex: '1 1 0' }}><span className="lbl">Agent 端口</span><input className="inp mono" value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" /></label>
       </div>
+      <label className="field"><span className="lbl">SSH 连接目标（可填 ~/.ssh/config 中的别名，不填用地址）</span><input className="inp mono" value={sshHost} onChange={(e) => setSshHost(e.target.value)} placeholder={s.host} /></label>
       <label className="field"><span className="lbl">允许读取的目录（每行一个，修改后需重新安装 Agent 生效）</span><textarea className="inp mono" rows={2} value={roots} onChange={(e) => setRoots(e.target.value)} placeholder="登录用户家目录" /></label>
       <div className="row" style={{ gap: 12 }}>
         <div className="grow">
@@ -544,7 +546,16 @@ function parseLine(text: string, line: number, defaultUser: string): Parsed | nu
 }
 
 function AddServerDialog({ groups, onClose, onAdded }: { groups: string[]; onClose: () => void; onAdded: (s: Server | null) => void }) {
-  const [mode, setMode] = useState<'one' | 'batch'>('one')
+  const [mode, setMode] = useState<'one' | 'batch' | 'import'>('one')
+  const sshConfig = usePoll(() => serversApi.sshConfig(), [mode === 'import'], 0)
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  const importable = (sshConfig.data?.hosts ?? []).filter((h) => !h.added)
+  const togglePick = (alias: string) => setPicked((prev) => {
+    const next = new Set(prev)
+    if (next.has(alias)) next.delete(alias)
+    else next.add(alias)
+    return next
+  })
   const [host, setHost] = useState('')
   const [name, setName] = useState('')
   const [sshUser, setSshUser] = useState('')
@@ -566,7 +577,7 @@ function AddServerDialog({ groups, onClose, onAdded }: { groups: string[]; onClo
   )
   const bad = parsed.filter((p): p is Extract<Parsed, { error: string }> => 'error' in p)
   const good = parsed.filter((p): p is Extract<Parsed, { host: string }> => 'host' in p)
-  const anySsh = mode === 'one' ? !!sshUser.trim() : good.some((p) => p.ssh_user)
+  const anySsh = mode === 'one' ? !!sshUser.trim() : mode === 'batch' ? good.some((p) => p.ssh_user) : picked.size > 0
 
   const submit = async () => {
     setErr(null)
@@ -580,7 +591,10 @@ function AddServerDialog({ groups, onClose, onAdded }: { groups: string[]; onClo
     }
     const items = mode === 'one'
       ? [{ ...common, host: host.trim(), name: name.trim() || null, ssh_user: sshUser.trim() || null, ssh_port: Number(sshPort) || 22 }]
-      : good.map((p) => ({ ...common, host: p.host, name: p.name, ssh_user: p.ssh_user, ssh_port: p.ssh_port }))
+      : mode === 'batch'
+        ? good.map((p) => ({ ...common, host: p.host, name: p.name, ssh_user: p.ssh_user, ssh_port: p.ssh_port }))
+        // 以别名作为 SSH 连接目标，沿用 config 里的密钥、跳板机等设置
+        : importable.filter((h) => picked.has(h.alias)).map((h) => ({ ...common, host: h.hostname, name: h.alias, ssh_host: h.alias, ssh_user: h.user, ssh_port: h.port }))
     try {
       const res = await serversApi.batchCreate(items, deploy)
       if (res.errors.length) {
@@ -602,7 +616,7 @@ function AddServerDialog({ groups, onClose, onAdded }: { groups: string[]; onClo
     <Modal title="添加服务器" onClose={onClose} width={560}>
       <form className="col" style={{ gap: 14 }} onSubmit={(e) => { e.preventDefault(); submit() }}>
         <div className="row" style={{ gap: 6 }}>
-          <Chips value={mode} options={[['one', '单台'], ['batch', '批量']]} onChange={setMode} />
+          <Chips value={mode} options={[['one', '单台'], ['batch', '批量'], ['import', '从 SSH 配置导入']]} onChange={setMode} />
         </div>
         {mode === 'one' ? (
           <>
@@ -615,6 +629,29 @@ function AddServerDialog({ groups, onClose, onAdded }: { groups: string[]; onClo
               <label className="field" style={{ flex: '1 1 0' }}><span className="lbl">SSH 端口</span><input className="inp mono" value={sshPort} onChange={(e) => setSshPort(e.target.value)} inputMode="numeric" /></label>
             </div>
           </>
+        ) : mode === 'import' ? (
+          <div className="col" style={{ gap: 8 }}>
+            <div className="row">
+              <span className="lbl grow">读取中心主机的 <span className="mono">{sshConfig.data?.path ?? '~/.ssh/config'}</span>，名称和 SSH 连接目标用 Host 别名</span>
+              {importable.length > 0 && (
+                <button type="button" className="btn sm" onClick={() => setPicked(picked.size === importable.length ? new Set() : new Set(importable.map((h) => h.alias)))}>
+                  {picked.size === importable.length ? '全不选' : '全选'}
+                </button>
+              )}
+            </div>
+            {sshConfig.error && <div className="notice err">{sshConfig.error}</div>}
+            {sshConfig.data && sshConfig.data.hosts.length === 0 && <div className="notice">没有读到主机（不含通配符的 Host 条目）。</div>}
+            <div className="col" style={{ maxHeight: 240, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 6 }}>
+              {(sshConfig.data?.hosts ?? []).map((h) => (
+                <label key={h.alias} className="row" style={{ gap: 8, padding: '6px 10px', borderBottom: '1px solid var(--border-soft)', fontSize: 13, opacity: h.added ? 0.5 : 1 }}>
+                  <input type="checkbox" disabled={h.added} checked={picked.has(h.alias)} onChange={() => togglePick(h.alias)} />
+                  <span className="mono" style={{ width: 140 }}>{h.alias}</span>
+                  <span className="mono grow lbl">{h.user}@{h.hostname}{h.port !== 22 ? `:${h.port}` : ''}</span>
+                  {h.added && <span className="lbl">已添加</span>}
+                </label>
+              ))}
+            </div>
+          </div>
         ) : (
           <>
             <label className="field">
@@ -630,11 +667,11 @@ function AddServerDialog({ groups, onClose, onAdded }: { groups: string[]; onClo
           </>
         )}
         <div className="row" style={{ gap: 12 }}>
-          <label className="field grow"><span className="lbl">运行组</span>
+          <label className="field grow" style={{ minWidth: 0 }}><span className="lbl">运行组</span>
             <input className="inp" list="add-group-options" value={group} onChange={(e) => setGroup(e.target.value)} />
             <datalist id="add-group-options">{groups.map((g) => <option key={g} value={g} />)}</datalist>
           </label>
-          <label className="field grow"><span className="lbl">使用人</span><input className="inp" value={owner} onChange={(e) => setOwner(e.target.value)} /></label>
+          <label className="field grow" style={{ minWidth: 0 }}><span className="lbl">使用人</span><input className="inp" value={owner} onChange={(e) => setOwner(e.target.value)} /></label>
           <label className="field" style={{ flex: '0 0 100px', minWidth: 0 }}><span className="lbl">Agent 端口</span><input className="inp mono" style={{ width: '100%' }} value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" /></label>
         </div>
         {anySsh && (
@@ -662,8 +699,8 @@ function AddServerDialog({ groups, onClose, onAdded }: { groups: string[]; onClo
         {failed.length > 0 && <div className="notice err">以下服务器没有添加：{failed.map((f) => <div key={f}>{f}</div>)}</div>}
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn" onClick={onClose}>{failed.length ? '关闭' : '取消'}</button>
-          <button type="submit" className="btn pri" disabled={busy || (mode === 'one' ? !host.trim() : !good.length || bad.length > 0)}>
-            {busy ? '添加中' : mode === 'one' ? '添加' : `添加 ${good.length} 台`}
+          <button type="submit" className="btn pri" disabled={busy || (mode === 'one' ? !host.trim() : mode === 'batch' ? !good.length || bad.length > 0 : !picked.size)}>
+            {busy ? '添加中' : mode === 'one' ? '添加' : `添加 ${mode === 'batch' ? good.length : picked.size} 台`}
           </button>
         </div>
       </form>

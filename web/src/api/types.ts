@@ -60,6 +60,7 @@ export interface Server {
   deploy: DeployState | null
   ssh_user: string | null
   ssh_port: number
+  ssh_host: string | null
   allow_roots: string[]
   host_info: HostInfo | null
   last_seen_at: string | null
@@ -101,6 +102,7 @@ export interface ServerCreate {
   port?: number
   ssh_user?: string | null
   ssh_port?: number
+  ssh_host?: string | null
   allow_roots?: string[]
   group?: string | null
   owner?: string | null
@@ -110,6 +112,11 @@ export interface ServerCreate {
 }
 
 export type ServerUpdate = Partial<ServerCreate>
+
+export interface SshConfigHosts {
+  path: string
+  hosts: { alias: string; hostname: string; user: string; port: number; added: boolean }[]
+}
 
 export interface ServerBatchResult {
   created: Server[]

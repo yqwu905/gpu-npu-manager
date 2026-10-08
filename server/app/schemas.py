@@ -57,6 +57,9 @@ class ServerBase(BaseModel):
         default=None, max_length=64, description="SSH 登录用户，填写后由中心服务安装和升级 Agent，任务以该用户运行"
     )
     ssh_port: int = Field(default=22, ge=1, le=65535, description="SSH 端口")
+    ssh_host: str | None = Field(
+        default=None, max_length=255, description="SSH 连接目标，可以是中心主机 ~/.ssh/config 中的别名，为空时用 host"
+    )
     allow_roots: list[str] = Field(default=[], description="允许读取的目录（推理结果所在位置），为空时为登录用户家目录")
     group: str | None = Field(default=None, description="运行组，任务调度按运行组选择服务器")
     owner: str | None = Field(default=None, description="使用人")
@@ -89,6 +92,7 @@ class ServerUpdate(BaseModel):
     port: int | None = Field(default=None, ge=1, le=65535)
     ssh_user: str | None = Field(default=None, max_length=64)
     ssh_port: int | None = Field(default=None, ge=1, le=65535)
+    ssh_host: str | None = Field(default=None, max_length=255)
     allow_roots: list[str] | None = None
     group: str | None = None
     owner: str | None = None
@@ -397,3 +401,16 @@ class AgentPackage(BaseModel):
     public_key: str | None = Field(default=None, description="中心主机的 SSH 公钥，需要加入各服务器的 authorized_keys")
     public_key_path: str | None = None
     auto_upgrade: bool = Field(description="是否自动升级版本落后的 Agent")
+
+
+class SshConfigHost(BaseModel):
+    alias: str = Field(description="Host 别名，导入后作为服务器名称和 SSH 连接目标")
+    hostname: str = Field(description="实际地址（HostName），作为 Agent 地址")
+    user: str
+    port: int
+    added: bool = Field(description="是否已经添加过（名称、地址或 SSH 目标相同）")
+
+
+class SshConfigHosts(BaseModel):
+    path: str
+    hosts: list[SshConfigHost]

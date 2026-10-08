@@ -644,6 +644,27 @@
         }
       }
     },
+    "/api/ssh-config": {
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "中心主机 ~/.ssh/config 中可导入的主机",
+        "operationId": "ssh_config_hosts_api_ssh_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SshConfigHosts"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/servers/deploy": {
       "post": {
         "tags": [
@@ -4209,6 +4230,19 @@
             "description": "SSH 端口",
             "default": 22
           },
+          "ssh_host": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ssh Host",
+            "description": "SSH 连接目标，可以是中心主机 ~/.ssh/config 中的别名，为空时用 host"
+          },
           "allow_roots": {
             "items": {
               "type": "string"
@@ -4376,6 +4410,19 @@
             "title": "Ssh Port",
             "description": "SSH 端口",
             "default": 22
+          },
+          "ssh_host": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ssh Host",
+            "description": "SSH 连接目标，可以是中心主机 ~/.ssh/config 中的别名，为空时用 host"
           },
           "allow_roots": {
             "items": {
@@ -4668,6 +4715,18 @@
             ],
             "title": "Ssh Port"
           },
+          "ssh_host": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ssh Host"
+          },
           "allow_roots": {
             "anyOf": [
               {
@@ -4744,6 +4803,63 @@
         "type": "object",
         "title": "ServerUpdate",
         "description": "只提交需要修改的字段。"
+      },
+      "SshConfigHost": {
+        "properties": {
+          "alias": {
+            "type": "string",
+            "title": "Alias",
+            "description": "Host 别名，导入后作为服务器名称和 SSH 连接目标"
+          },
+          "hostname": {
+            "type": "string",
+            "title": "Hostname",
+            "description": "实际地址（HostName），作为 Agent 地址"
+          },
+          "user": {
+            "type": "string",
+            "title": "User"
+          },
+          "port": {
+            "type": "integer",
+            "title": "Port"
+          },
+          "added": {
+            "type": "boolean",
+            "title": "Added",
+            "description": "是否已经添加过（名称、地址或 SSH 目标相同）"
+          }
+        },
+        "type": "object",
+        "required": [
+          "alias",
+          "hostname",
+          "user",
+          "port",
+          "added"
+        ],
+        "title": "SshConfigHost"
+      },
+      "SshConfigHosts": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "hosts": {
+            "items": {
+              "$ref": "#/components/schemas/SshConfigHost"
+            },
+            "type": "array",
+            "title": "Hosts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "hosts"
+        ],
+        "title": "SshConfigHosts"
       },
       "ValidationError": {
         "properties": {
