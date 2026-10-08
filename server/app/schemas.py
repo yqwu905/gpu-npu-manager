@@ -212,6 +212,7 @@ class JobOut(BaseModel):
         "succeeded 成功 / failed 失败 / cancelled 已取消"
     )
     queue_position: int | None = Field(default=None, description="排队中的任务在队列中的位置，从 1 开始")
+    wait_reason: str | None = Field(default=None, description="排队中的任务为什么还没被调度，由每轮调度更新")
     assigned_server_id: int | None = None
     assigned_server_name: str | None = None
     device_indices: list[int] = Field(default=[], description="分配到的卡号")
@@ -335,3 +336,9 @@ class SampleCompare(BaseModel):
     total: int
     offset: int
     items: list[SampleCompareItem]
+
+
+class SchedulerSettings(BaseModel):
+    strict_order: bool = Field(
+        description="true 严格按队列顺序调度；false 允许后面的任务在前面的任务等卡时先运行"
+    )

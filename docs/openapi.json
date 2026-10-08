@@ -1249,6 +1249,66 @@
         }
       }
     },
+    "/api/scheduler": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "查询调度模式",
+        "operationId": "get_scheduler_api_scheduler_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchedulerSettings"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "切换调度模式",
+        "operationId": "update_scheduler_api_scheduler_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SchedulerSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SchedulerSettings"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/evaluators": {
       "get": {
         "tags": [
@@ -2905,6 +2965,18 @@
             "title": "Queue Position",
             "description": "排队中的任务在队列中的位置，从 1 开始"
           },
+          "wait_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wait Reason",
+            "description": "排队中的任务为什么还没被调度，由每轮调度更新"
+          },
           "assigned_server_id": {
             "anyOf": [
               {
@@ -3562,6 +3634,20 @@
           "items"
         ],
         "title": "SamplePage"
+      },
+      "SchedulerSettings": {
+        "properties": {
+          "strict_order": {
+            "type": "boolean",
+            "title": "Strict Order",
+            "description": "true 严格按队列顺序调度；false 允许后面的任务在前面的任务等卡时先运行"
+          }
+        },
+        "type": "object",
+        "required": [
+          "strict_order"
+        ],
+        "title": "SchedulerSettings"
       },
       "ServerCreate": {
         "properties": {
