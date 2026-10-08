@@ -120,3 +120,48 @@ class Job(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     assigned_server: Mapped[Server | None] = relationship(foreign_keys=[assigned_server_id])
+
+
+class ResultSet(Base):
+    """推理结果集：某台服务器上的一个目录，内含 meta.json 和 predictions.jsonl。"""
+
+    __tablename__ = "result_sets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    server_id: Mapped[int] = mapped_column(ForeignKey("servers.id"), index=True)
+    path: Mapped[str] = mapped_column(Text)
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    sample_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    job_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 产生该结果的任务
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    server: Mapped[Server] = relationship()
+    evaluations: Mapped[list["Evaluation"]] = relationship(
+        back_populates="result_set", cascade="all, delete-orphan", order_by="Evaluation.id"
+    )
+
+
+class Evaluation(Base):
+    """一次评测：对一个结果集计算若干指标，作为任务运行。"""
+
+    __tablename__ = "evaluations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    result_set_id: Mapped[int] = mapped_column(ForeignKey("result_sets.id", ondelete="CASCADE"), index=True)
+    metrics: Mapped[list] = mapped_column(JSON, default=list)  # 请求的指标名
+    reference: Mapped[str | None] = mapped_column(Text, nullable=True)
+    job_id: Mapped[int | None] = mapped_column(ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending / running / succeeded / failed
+    output_dir: Mapped[str] = mapped_column(Text)
+    values: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # 指标名 -> 数值
+    counts: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    errors: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # 指标名 -> 未能计算的原因
+    num_skipped: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    result_set: Mapped[ResultSet] = relationship(back_populates="evaluations")
+    job: Mapped[Job | None] = relationship()

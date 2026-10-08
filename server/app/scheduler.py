@@ -78,6 +78,8 @@ class Scheduler:
         self._task: asyncio.Task | None = None
         # 保证同一时刻只有一轮调度在运行
         self._lock = asyncio.Lock()
+        # 每轮调度后执行的回调（如回收评测结果）
+        self.after_round: list = []
 
     # ------------------------------------------------------------------
     # 同步运行中任务
@@ -232,6 +234,8 @@ class Scheduler:
         async with self._lock:
             await self.sync_active()
             await self.schedule()
+            for callback in self.after_round:
+                await callback()
 
     async def _loop(self) -> None:
         while True:

@@ -32,6 +32,11 @@ class Settings:
     schedule_strict: bool = field(
         default_factory=lambda: os.environ.get("GNM_SCHEDULE_STRICT", "0") in ("1", "true", "True")
     )
+    # 评测脚本在各服务器上的解释器和路径（install.sh 会把 evaluate.py 装到 /opt/gnm-agent）
+    eval_python: str = field(default_factory=lambda: os.environ.get("GNM_EVAL_PYTHON", "python3"))
+    eval_script: str = field(
+        default_factory=lambda: os.environ.get("GNM_EVAL_SCRIPT", "/opt/gnm-agent/evaluate.py")
+    )
     # 是否启动后台轮询和调度（测试时关闭）
     enable_poller: bool = field(
         default_factory=lambda: os.environ.get("GNM_ENABLE_POLLER", "1") not in ("0", "false", "False")

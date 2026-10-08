@@ -234,3 +234,104 @@ class JobLog(BaseModel):
     next_offset: int = Field(description="下次增量读取时传入的 offset")
     size: int = Field(description="日志文件当前总字节数")
     data: str
+
+
+MetricName = Literal["psnr", "ssim", "lpips", "ocr_a", "cer", "ned"]
+
+
+class EvaluatorOut(BaseModel):
+    name: MetricName
+    label: str
+    kind: Literal["image", "text"]
+    unit: str | None = None
+    higher_is_better: bool
+    description: str
+
+
+class ResultSetCreate(BaseModel):
+    server_id: int
+    path: str = Field(min_length=1, description="结果集目录在服务器上的绝对路径，目录内需有 predictions.jsonl")
+    name: str | None = Field(default=None, max_length=255, description="不填时取 meta.json 的 name 或目录名")
+    note: str | None = None
+    job_id: int | None = Field(default=None, description="产生该结果的任务")
+
+
+class ResultSetUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    note: str | None = None
+
+
+class ResultSetOut(BaseModel):
+    id: int
+    name: str
+    server_id: int
+    server_name: str
+    path: str
+    meta: dict = Field(description="meta.json 的内容（模型、数据集、参数等）")
+    sample_count: int | None = None
+    note: str | None = None
+    job_id: int | None = None
+    metrics: dict[str, float] = Field(default={}, description="每个指标最近一次成功评测的值")
+    evaluating: bool = Field(default=False, description="是否有进行中的评测")
+    created_at: datetime
+
+
+class SamplePage(BaseModel):
+    total: int
+    offset: int
+    items: list[dict] = Field(
+        description="predictions.jsonl 的原始记录，另加 metrics 字段（该样本的逐样本指标）；"
+        "图片字段为相对路径，用 /api/results/{id}/file?path= 读取"
+    )
+
+
+class EvaluationCreate(BaseModel):
+    result_set_id: int
+    metrics: list[MetricName] = Field(min_length=1)
+    reference: str | None = Field(default=None, description="可选，参考值 jsonl 在服务器上的路径，按 id 合并 ref_image / ref_text")
+    num_devices: int = Field(default=0, ge=0, le=8, description="LPIPS 可用 1 张卡加速，其他指标用 0 即可")
+    priority: int = Field(default=0, ge=-100, le=100)
+    submitter: str | None = None
+
+
+class EvaluationOut(BaseModel):
+    id: int
+    result_set_id: int
+    result_set_name: str
+    metrics: list[str]
+    reference: str | None = None
+    job_id: int | None = None
+    job_status: str | None = None
+    status: Literal["pending", "running", "succeeded", "failed"]
+    values: dict[str, float | None] | None = Field(default=None, description="整体指标，无法计算的为 null")
+    counts: dict[str, int] | None = Field(default=None, description="每个指标参与计算的样本数")
+    errors: dict[str, str] | None = Field(default=None, description="未能计算的指标及原因")
+    num_skipped: int | None = Field(default=None, description="读取失败或尺寸不一致而跳过的样本数")
+    error: str | None = None
+    created_at: datetime
+    finished_at: datetime | None = None
+
+
+class CompareResultSet(BaseModel):
+    id: int
+    name: str
+    server_name: str
+    meta: dict
+
+
+class MetricCompare(BaseModel):
+    result_sets: list[CompareResultSet]
+    metrics: list[EvaluatorOut] = Field(description="至少一个结果集有值的指标")
+    values: dict[str, dict[str, float]] = Field(description="结果集 ID -> 指标名 -> 值")
+
+
+class SampleCompareItem(BaseModel):
+    id: str
+    results: dict[str, dict | None] = Field(description="结果集 ID -> 该样本的记录（含 metrics），缺失为 null")
+    spread: float | None = Field(default=None, description="排序指标在各结果集之间的最大差值")
+
+
+class SampleCompare(BaseModel):
+    total: int
+    offset: int
+    items: list[SampleCompareItem]
