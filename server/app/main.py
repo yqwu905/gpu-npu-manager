@@ -1,0 +1,38 @@
+from contextlib import asynccontextmanager
+
+import httpx
+from fastapi import FastAPI
+
+from .config import Settings
+from .db import Base, make_engine, make_session_factory
+from .poller import Poller
+from .routers import overview, servers
+
+
+def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTransport | None = None) -> FastAPI:
+    settings = settings or Settings()
+    engine = make_engine(settings.database_url)
+    Base.metadata.create_all(engine)
+    session_factory = make_session_factory(engine)
+    poller = Poller(settings, session_factory, transport=transport)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        if settings.enable_poller:
+            poller.start()
+        yield
+        await poller.stop()
+
+    app = FastAPI(
+        title="GPU/NPU 服务器管理平台",
+        version="0.1.0",
+        description="管理昇腾 NPU 与英伟达 GPU 服务器：状态查看、任务调度、推理结果评测。",
+        lifespan=lifespan,
+    )
+    app.state.settings = settings
+    app.state.session_factory = session_factory
+    app.state.poller = poller
+    app.include_router(overview.router)
+    app.include_router(servers.router)
+    return app
+

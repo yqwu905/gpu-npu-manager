@@ -1,0 +1,1818 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "GPU/NPU 服务器管理平台",
+    "description": "管理昇腾 NPU 与英伟达 GPU 服务器：状态查看、任务调度、推理结果评测。",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/overview": {
+      "get": {
+        "tags": [
+          "overview"
+        ],
+        "summary": "首页总览数字",
+        "operationId": "overview_api_overview_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Overview"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/servers": {
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "服务器列表（含卡状态，支持筛选）",
+        "operationId": "list_servers_api_servers_get",
+        "parameters": [
+          {
+            "name": "include_devices",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "是否返回每张卡的详情",
+              "default": true,
+              "title": "Include Devices"
+            },
+            "description": "是否返回每张卡的详情"
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "关键字，匹配名称、地址、主机名、备注",
+              "title": "Q"
+            },
+            "description": "关键字，匹配名称、地址、主机名、备注"
+          },
+          {
+            "name": "group",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "运行组，多个为“或”",
+              "title": "Group"
+            },
+            "description": "运行组，多个为“或”"
+          },
+          {
+            "name": "owner",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "使用人，多个为“或”",
+              "title": "Owner"
+            },
+            "description": "使用人，多个为“或”"
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "标签，多个为“且”，即必须同时包含",
+              "title": "Tag"
+            },
+            "description": "标签，多个为“且”，即必须同时包含"
+          },
+          {
+            "name": "accelerator",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "gpu",
+                    "npu"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "加速卡类型",
+              "title": "Accelerator"
+            },
+            "description": "加速卡类型"
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "加速卡型号，多个为“或”",
+              "title": "Model"
+            },
+            "description": "加速卡型号，多个为“或”"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "unknown",
+                    "online",
+                    "offline"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "在线状态",
+              "title": "Status"
+            },
+            "description": "在线状态"
+          },
+          {
+            "name": "schedulable",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "是否参与调度",
+              "title": "Schedulable"
+            },
+            "description": "是否参与调度"
+          },
+          {
+            "name": "has_idle",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "true 只返回有空闲卡的服务器",
+              "title": "Has Idle"
+            },
+            "description": "true 只返回有空闲卡的服务器"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ServerOut"
+                  },
+                  "title": "Response List Servers Api Servers Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "添加服务器",
+        "operationId": "create_server_api_servers_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServerCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/servers/grouped": {
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "按属性分组的服务器列表",
+        "operationId": "grouped_servers_api_servers_grouped_get",
+        "parameters": [
+          {
+            "name": "by",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "enum": [
+                "group",
+                "owner",
+                "tag",
+                "accelerator",
+                "model",
+                "status"
+              ],
+              "type": "string",
+              "description": "分组属性；按标签或型号分组时，一台服务器可出现在多个分组中",
+              "title": "By"
+            },
+            "description": "分组属性；按标签或型号分组时，一台服务器可出现在多个分组中"
+          },
+          {
+            "name": "include_devices",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true,
+              "title": "Include Devices"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "关键字，匹配名称、地址、主机名、备注",
+              "title": "Q"
+            },
+            "description": "关键字，匹配名称、地址、主机名、备注"
+          },
+          {
+            "name": "group",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "运行组，多个为“或”",
+              "title": "Group"
+            },
+            "description": "运行组，多个为“或”"
+          },
+          {
+            "name": "owner",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "使用人，多个为“或”",
+              "title": "Owner"
+            },
+            "description": "使用人，多个为“或”"
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "标签，多个为“且”，即必须同时包含",
+              "title": "Tag"
+            },
+            "description": "标签，多个为“且”，即必须同时包含"
+          },
+          {
+            "name": "accelerator",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "gpu",
+                    "npu"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "加速卡类型",
+              "title": "Accelerator"
+            },
+            "description": "加速卡类型"
+          },
+          {
+            "name": "model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "加速卡型号，多个为“或”",
+              "title": "Model"
+            },
+            "description": "加速卡型号，多个为“或”"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "unknown",
+                    "online",
+                    "offline"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "在线状态",
+              "title": "Status"
+            },
+            "description": "在线状态"
+          },
+          {
+            "name": "schedulable",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "是否参与调度",
+              "title": "Schedulable"
+            },
+            "description": "是否参与调度"
+          },
+          {
+            "name": "has_idle",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "true 只返回有空闲卡的服务器",
+              "title": "Has Idle"
+            },
+            "description": "true 只返回有空闲卡的服务器"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ServerGroup"
+                  },
+                  "title": "Response Grouped Servers Api Servers Grouped Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/meta/filters": {
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "筛选项候选值",
+        "operationId": "filter_options_api_meta_filters_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FilterOptions"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/servers/{server_id}": {
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "服务器详情",
+        "operationId": "get_server_api_servers__server_id__get",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Server Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "修改服务器属性",
+        "operationId": "update_server_api_servers__server_id__patch",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Server Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServerUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "删除服务器",
+        "operationId": "delete_server_api_servers__server_id__delete",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Server Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/servers/{server_id}/refresh": {
+      "post": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "立即拉取一次该服务器状态",
+        "operationId": "refresh_server_api_servers__server_id__refresh_post",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Server Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/servers/{server_id}/history": {
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "卡的历史趋势",
+        "operationId": "server_history_api_servers__server_id__history_get",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Server Id"
+            }
+          },
+          {
+            "name": "hours",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 168,
+              "minimum": 1,
+              "description": "最近多少小时",
+              "default": 24,
+              "title": "Hours"
+            },
+            "description": "最近多少小时"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DeviceHistory"
+                  },
+                  "title": "Response Server History Api Servers  Server Id  History Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AcceleratorSummary": {
+        "properties": {
+          "servers": {
+            "type": "integer",
+            "title": "Servers"
+          },
+          "devices": {
+            "type": "integer",
+            "title": "Devices"
+          },
+          "idle_devices": {
+            "type": "integer",
+            "title": "Idle Devices"
+          }
+        },
+        "type": "object",
+        "required": [
+          "servers",
+          "devices",
+          "idle_devices"
+        ],
+        "title": "AcceleratorSummary"
+      },
+      "DeviceHistory": {
+        "properties": {
+          "device_index": {
+            "type": "integer",
+            "title": "Device Index"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/MetricPoint"
+            },
+            "type": "array",
+            "title": "Points"
+          }
+        },
+        "type": "object",
+        "required": [
+          "device_index",
+          "points"
+        ],
+        "title": "DeviceHistory"
+      },
+      "DeviceOut": {
+        "properties": {
+          "index": {
+            "type": "integer",
+            "title": "Index",
+            "description": "逻辑卡号，即 CUDA_VISIBLE_DEVICES / ASCEND_RT_VISIBLE_DEVICES 使用的编号"
+          },
+          "vendor": {
+            "type": "string",
+            "title": "Vendor",
+            "description": "nvidia / ascend"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "uuid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Uuid"
+          },
+          "bus_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bus Id"
+          },
+          "npu_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Npu Id",
+            "description": "昇腾 NPU ID（npu-smi 中的 NPU 列）"
+          },
+          "chip_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chip Id"
+          },
+          "memory_total_mb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Total Mb"
+          },
+          "memory_used_mb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Used Mb"
+          },
+          "utilization": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Utilization",
+            "description": "GPU 利用率或 NPU AICore 利用率，百分比"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature",
+            "description": "摄氏度"
+          },
+          "power_w": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Power W"
+          },
+          "power_limit_w": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Power Limit W"
+          },
+          "health": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Health"
+          },
+          "processes": {
+            "items": {
+              "$ref": "#/components/schemas/ProcessOut"
+            },
+            "type": "array",
+            "title": "Processes",
+            "default": []
+          },
+          "idle": {
+            "type": "boolean",
+            "title": "Idle",
+            "description": "是否空闲：服务器在线、健康、无进程、显存占用低于阈值",
+            "default": false
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "index",
+          "vendor"
+        ],
+        "title": "DeviceOut"
+      },
+      "DiskOut": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "total_gb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Gb"
+          },
+          "used_gb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Used Gb"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "title": "DiskOut"
+      },
+      "FilterOptions": {
+        "properties": {
+          "groups": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Groups"
+          },
+          "owners": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Owners"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags"
+          },
+          "models": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Models"
+          },
+          "accelerators": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Accelerators"
+          }
+        },
+        "type": "object",
+        "required": [
+          "groups",
+          "owners",
+          "tags",
+          "models",
+          "accelerators"
+        ],
+        "title": "FilterOptions"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HostInfo": {
+        "properties": {
+          "cpu_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cpu Count"
+          },
+          "cpu_percent": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cpu Percent"
+          },
+          "load1": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Load1"
+          },
+          "memory_total_mb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Total Mb"
+          },
+          "memory_used_mb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Used Mb"
+          },
+          "disks": {
+            "items": {
+              "$ref": "#/components/schemas/DiskOut"
+            },
+            "type": "array",
+            "title": "Disks",
+            "default": []
+          }
+        },
+        "type": "object",
+        "title": "HostInfo"
+      },
+      "MetricPoint": {
+        "properties": {
+          "ts": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Ts"
+          },
+          "utilization": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Utilization"
+          },
+          "memory_used_mb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Used Mb"
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature"
+          },
+          "power_w": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Power W"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ts"
+        ],
+        "title": "MetricPoint"
+      },
+      "Overview": {
+        "properties": {
+          "servers_total": {
+            "type": "integer",
+            "title": "Servers Total"
+          },
+          "servers_online": {
+            "type": "integer",
+            "title": "Servers Online"
+          },
+          "servers_offline": {
+            "type": "integer",
+            "title": "Servers Offline"
+          },
+          "devices_total": {
+            "type": "integer",
+            "title": "Devices Total"
+          },
+          "devices_idle": {
+            "type": "integer",
+            "title": "Devices Idle"
+          },
+          "devices_busy": {
+            "type": "integer",
+            "title": "Devices Busy"
+          },
+          "by_accelerator": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/AcceleratorSummary"
+            },
+            "type": "object",
+            "title": "By Accelerator",
+            "description": "按 gpu / npu 汇总"
+          }
+        },
+        "type": "object",
+        "required": [
+          "servers_total",
+          "servers_online",
+          "servers_offline",
+          "devices_total",
+          "devices_idle",
+          "devices_busy",
+          "by_accelerator"
+        ],
+        "title": "Overview"
+      },
+      "ProcessOut": {
+        "properties": {
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "user": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User"
+          },
+          "memory_mb": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Memory Mb"
+          }
+        },
+        "type": "object",
+        "title": "ProcessOut"
+      },
+      "ServerCreate": {
+        "properties": {
+          "group": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group",
+            "description": "运行组，任务调度按运行组选择服务器"
+          },
+          "owner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner",
+            "description": "使用人"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags",
+            "description": "标签，可多个",
+            "default": []
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note",
+            "description": "备注"
+          },
+          "schedulable": {
+            "type": "boolean",
+            "title": "Schedulable",
+            "description": "是否参与任务调度",
+            "default": true
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "host": {
+            "type": "string",
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Host",
+            "description": "Agent 地址（IP 或域名）"
+          },
+          "port": {
+            "type": "integer",
+            "maximum": 65535.0,
+            "minimum": 1.0,
+            "title": "Port",
+            "description": "Agent 端口",
+            "default": 9100
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "host"
+        ],
+        "title": "ServerCreate"
+      },
+      "ServerGroup": {
+        "properties": {
+          "key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Key",
+            "description": "分组值，为 null 表示未设置该属性"
+          },
+          "server_count": {
+            "type": "integer",
+            "title": "Server Count"
+          },
+          "online_count": {
+            "type": "integer",
+            "title": "Online Count"
+          },
+          "device_count": {
+            "type": "integer",
+            "title": "Device Count"
+          },
+          "idle_device_count": {
+            "type": "integer",
+            "title": "Idle Device Count"
+          },
+          "servers": {
+            "items": {
+              "$ref": "#/components/schemas/ServerOut"
+            },
+            "type": "array",
+            "title": "Servers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "server_count",
+          "online_count",
+          "device_count",
+          "idle_device_count",
+          "servers"
+        ],
+        "title": "ServerGroup"
+      },
+      "ServerOut": {
+        "properties": {
+          "group": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group",
+            "description": "运行组，任务调度按运行组选择服务器"
+          },
+          "owner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner",
+            "description": "使用人"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags",
+            "description": "标签，可多个",
+            "default": []
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note",
+            "description": "备注"
+          },
+          "schedulable": {
+            "type": "boolean",
+            "title": "Schedulable",
+            "description": "是否参与任务调度",
+            "default": true
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "host": {
+            "type": "string",
+            "title": "Host"
+          },
+          "port": {
+            "type": "integer",
+            "title": "Port"
+          },
+          "accelerator": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accelerator",
+            "description": "gpu / npu，首次连通后自动识别"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "online",
+              "offline"
+            ],
+            "title": "Status"
+          },
+          "hostname": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hostname"
+          },
+          "agent_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Version"
+          },
+          "host_info": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HostInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "models": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Models",
+            "description": "该服务器上的加速卡型号",
+            "default": []
+          },
+          "device_count": {
+            "type": "integer",
+            "title": "Device Count",
+            "default": 0
+          },
+          "idle_device_count": {
+            "type": "integer",
+            "title": "Idle Device Count",
+            "default": 0
+          },
+          "devices": {
+            "items": {
+              "$ref": "#/components/schemas/DeviceOut"
+            },
+            "type": "array",
+            "title": "Devices",
+            "default": []
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "host",
+          "port",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "ServerOut"
+      },
+      "ServerUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "host": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host"
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 65535.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Port"
+          },
+          "group": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group"
+          },
+          "owner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "schedulable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schedulable"
+          }
+        },
+        "type": "object",
+        "title": "ServerUpdate",
+        "description": "只提交需要修改的字段。"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      }
+    }
+  }
+}

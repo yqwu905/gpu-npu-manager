@@ -1,0 +1,64 @@
+# GPU/NPU 服务器管理平台
+
+统一管理昇腾 NPU 和英伟达 GPU 服务器：查看服务器与卡状态、按属性分组筛选、任务排队调度、推理结果评测与对比。
+
+设计文档：<https://claude.ai/code/artifact/249a2da0-b3ac-4760-833d-44408f4e2aec>
+
+## 进度
+
+| 里程碑 | 状态 |
+| --- | --- |
+| 1. 服务器与卡状态（Agent 采集、属性管理、分组筛选） | 已完成 |
+| 2. 任务调度 | 未开始 |
+| 3. 推理结果与评测 | 未开始 |
+| 4. 前端对接 | 未开始 |
+
+## 目录
+
+```
+agent/          节点 Agent（单文件，仅依赖 Python 3.7+ 标准库）
+server/app/     中心服务（FastAPI + SQLAlchemy）
+docs/           接口说明 api.md 与 openapi.json
+tests/          测试与 smi 输出样例
+scripts/        辅助脚本
+```
+
+## 部署 Agent（每台服务器）
+
+把 `agent/` 目录复制到服务器上，以 root 执行：
+
+```sh
+sudo ./install.sh <运行用户> <token> [端口，默认 9100]
+```
+
+Agent 会自动检测 `nvidia-smi` 或 `npu-smi`。命令不在 PATH 中时，可在 `/etc/gnm-agent.env` 里用 `GNM_NVIDIA_SMI` / `GNM_NPU_SMI` 指定路径。
+
+> `npu-smi info` 的解析目前基于公开资料中的 910B 和 310P 输出样例，接入真实机器后需要核对一次。
+
+## 运行中心服务
+
+```sh
+pip install -r server/requirements.txt
+cd server
+GNM_AGENT_TOKEN=<token> uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000
+```
+
+打开 `http://<地址>:8000/docs` 可在线调试接口。常用环境变量：
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `GNM_DATABASE_URL` | `sqlite:///./data/gnm.db` | 数据库地址，可换成 PostgreSQL |
+| `GNM_AGENT_TOKEN` | 空 | 与 Agent 共享的令牌 |
+| `GNM_POLL_INTERVAL` | `10` | 状态轮询间隔（秒） |
+| `GNM_OFFLINE_AFTER` | `3` | 连续失败多少次判定离线 |
+| `GNM_HISTORY_DAYS` | `7` | 趋势数据保留天数 |
+| `GNM_IDLE_MEMORY_MB_GPU` | `1024` | GPU 空闲判定的显存阈值（MB） |
+| `GNM_IDLE_MEMORY_MB_NPU` | `6144` | NPU 空闲判定的 HBM 阈值（MB），空载时也有 3~4 GB 占用 |
+
+## 开发
+
+```sh
+pip install -r requirements-dev.txt
+pytest
+python scripts/export_openapi.py   # 接口变更后更新 docs/openapi.json
+```

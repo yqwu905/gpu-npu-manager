@@ -1,0 +1,15 @@
+[Unit]
+Description=GPU/NPU Manager Agent
+After=network-online.target
+
+[Service]
+Type=simple
+# 任务以 Agent 的运行用户执行，请改成实际登录用户
+User=CHANGE_ME
+EnvironmentFile=/etc/gnm-agent.env
+ExecStart=/usr/bin/env python3 /opt/gnm-agent/agent.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
