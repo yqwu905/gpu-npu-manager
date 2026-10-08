@@ -1,4 +1,4 @@
-// 推理结果与评测接口上线前使用的示例数据，内容与前端设计稿一致，结构与 PR #3 的接口一致
+// 后端缺少推理结果与评测接口时使用的示例数据，内容与前端设计稿一致，结构与后端接口一致
 import type {
   CompareMetrics, CompareSampleItem, CompareSamples, CompareSort, Evaluation, EvaluationCreate, Evaluator, ResultSet, ResultSetCreate, Sample, SamplePage,
 } from '../api/types'

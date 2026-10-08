@@ -204,7 +204,7 @@ export interface SchedulerSettings {
   strict_order: boolean
 }
 
-// ---- 第 3 步推理结果与评测接口（PR #3，milestone-3-results 分支），字段与其 schemas.py 一致 ----
+// ---- 第 3 步推理结果与评测接口，字段与 server/app/schemas.py 一致 ----
 
 export type MetricKind = 'image' | 'text'
 

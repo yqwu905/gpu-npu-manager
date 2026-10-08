@@ -1248,6 +1248,676 @@
           }
         }
       }
+    },
+    "/api/evaluators": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "可用的评测指标",
+        "operationId": "list_evaluators_api_evaluators_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/EvaluatorOut"
+                  },
+                  "type": "array",
+                  "title": "Response List Evaluators Api Evaluators Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/results": {
+      "post": {
+        "tags": [
+          "results"
+        ],
+        "summary": "登记推理结果集",
+        "operationId": "create_result_api_results_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResultSetCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultSetOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "结果集列表",
+        "operationId": "list_results_api_results_get",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Server Id"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "关键字，匹配名称、路径、备注",
+              "title": "Q"
+            },
+            "description": "关键字，匹配名称、路径、备注"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ResultSetOut"
+                  },
+                  "title": "Response List Results Api Results Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/results/{result_id}": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "结果集详情",
+        "operationId": "get_result_api_results__result_id__get",
+        "parameters": [
+          {
+            "name": "result_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Result Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultSetOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "results"
+        ],
+        "summary": "修改名称或备注",
+        "operationId": "update_result_api_results__result_id__patch",
+        "parameters": [
+          {
+            "name": "result_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Result Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResultSetUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultSetOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "results"
+        ],
+        "summary": "删除结果集登记（不删除服务器上的文件）",
+        "operationId": "delete_result_api_results__result_id__delete",
+        "parameters": [
+          {
+            "name": "result_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Result Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/results/{result_id}/samples": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "分页浏览样本",
+        "operationId": "result_samples_api_results__result_id__samples_get",
+        "parameters": [
+          {
+            "name": "result_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Result Id"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SamplePage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/results/{result_id}/file": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "读取结果集中的文件（如图片）",
+        "operationId": "result_file_api_results__result_id__file_get",
+        "parameters": [
+          {
+            "name": "result_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Result Id"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "相对结果集目录的路径，或服务器上的绝对路径",
+              "title": "Path"
+            },
+            "description": "相对结果集目录的路径，或服务器上的绝对路径"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/evaluations": {
+      "post": {
+        "tags": [
+          "results"
+        ],
+        "summary": "对结果集发起评测",
+        "operationId": "create_evaluation_api_evaluations_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvaluationCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvaluationOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "评测列表",
+        "operationId": "list_evaluations_api_evaluations_get",
+        "parameters": [
+          {
+            "name": "result_set_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Result Set Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EvaluationOut"
+                  },
+                  "title": "Response List Evaluations Api Evaluations Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/evaluations/{evaluation_id}": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "评测详情",
+        "operationId": "get_evaluation_api_evaluations__evaluation_id__get",
+        "parameters": [
+          {
+            "name": "evaluation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Evaluation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvaluationOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/compare/metrics": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "多组结果的指标对比",
+        "operationId": "compare_metrics_api_compare_metrics_get",
+        "parameters": [
+          {
+            "name": "ids",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              },
+              "description": "结果集 ID，可多个",
+              "title": "Ids"
+            },
+            "description": "结果集 ID，可多个"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricCompare"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/compare/samples": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "多组结果的样本并排对比",
+        "operationId": "compare_samples_api_compare_samples_get",
+        "parameters": [
+          {
+            "name": "ids",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              },
+              "description": "结果集 ID，可多个；样本顺序以第一个结果集为准",
+              "title": "Ids"
+            },
+            "description": "结果集 ID，可多个；样本顺序以第一个结果集为准"
+          },
+          {
+            "name": "sort_metric",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "按该指标排序",
+              "title": "Sort Metric"
+            },
+            "description": "按该指标排序"
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(spread|asc|desc)$",
+              "description": "spread：各结果集差值从大到小；asc/desc：按第一个结果集的值排序",
+              "default": "spread",
+              "title": "Sort"
+            },
+            "description": "spread：各结果集差值从大到小；asc/desc：按第一个结果集的值排序"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 20,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SampleCompare"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1274,6 +1944,35 @@
           "idle_devices"
         ],
         "title": "AcceleratorSummary"
+      },
+      "CompareResultSet": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "server_name": {
+            "type": "string",
+            "title": "Server Name"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "server_name",
+          "meta"
+        ],
+        "title": "CompareResultSet"
       },
       "DeviceHistory": {
         "properties": {
@@ -1523,6 +2222,298 @@
           "path"
         ],
         "title": "DiskOut"
+      },
+      "EvaluationCreate": {
+        "properties": {
+          "result_set_id": {
+            "type": "integer",
+            "title": "Result Set Id"
+          },
+          "metrics": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "psnr",
+                "ssim",
+                "lpips",
+                "ocr_a",
+                "cer",
+                "ned"
+              ]
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Metrics"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference",
+            "description": "可选，参考值 jsonl 在服务器上的路径，按 id 合并 ref_image / ref_text"
+          },
+          "num_devices": {
+            "type": "integer",
+            "maximum": 8.0,
+            "minimum": 0.0,
+            "title": "Num Devices",
+            "description": "LPIPS 可用 1 张卡加速，其他指标用 0 即可",
+            "default": 0
+          },
+          "priority": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": -100.0,
+            "title": "Priority",
+            "default": 0
+          },
+          "submitter": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitter"
+          }
+        },
+        "type": "object",
+        "required": [
+          "result_set_id",
+          "metrics"
+        ],
+        "title": "EvaluationCreate"
+      },
+      "EvaluationOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "result_set_id": {
+            "type": "integer",
+            "title": "Result Set Id"
+          },
+          "result_set_name": {
+            "type": "string",
+            "title": "Result Set Name"
+          },
+          "metrics": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Metrics"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "job_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Status"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "succeeded",
+              "failed"
+            ],
+            "title": "Status"
+          },
+          "values": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Values",
+            "description": "整体指标，无法计算的为 null"
+          },
+          "counts": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Counts",
+            "description": "每个指标参与计算的样本数"
+          },
+          "errors": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errors",
+            "description": "未能计算的指标及原因"
+          },
+          "num_skipped": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Num Skipped",
+            "description": "读取失败或尺寸不一致而跳过的样本数"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "result_set_id",
+          "result_set_name",
+          "metrics",
+          "status",
+          "created_at"
+        ],
+        "title": "EvaluationOut"
+      },
+      "EvaluatorOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": [
+              "psnr",
+              "ssim",
+              "lpips",
+              "ocr_a",
+              "cer",
+              "ned"
+            ],
+            "title": "Name"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "image",
+              "text"
+            ],
+            "title": "Kind"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "higher_is_better": {
+            "type": "boolean",
+            "title": "Higher Is Better"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "label",
+          "kind",
+          "higher_is_better",
+          "description"
+        ],
+        "title": "EvaluatorOut"
       },
       "FilterOptions": {
         "properties": {
@@ -2086,6 +3077,43 @@
         "type": "object",
         "title": "JobUpdate"
       },
+      "MetricCompare": {
+        "properties": {
+          "result_sets": {
+            "items": {
+              "$ref": "#/components/schemas/CompareResultSet"
+            },
+            "type": "array",
+            "title": "Result Sets"
+          },
+          "metrics": {
+            "items": {
+              "$ref": "#/components/schemas/EvaluatorOut"
+            },
+            "type": "array",
+            "title": "Metrics",
+            "description": "至少一个结果集有值的指标"
+          },
+          "values": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "number"
+              },
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Values",
+            "description": "结果集 ID -> 指标名 -> 值"
+          }
+        },
+        "type": "object",
+        "required": [
+          "result_sets",
+          "metrics",
+          "values"
+        ],
+        "title": "MetricCompare"
+      },
       "MetricPoint": {
         "properties": {
           "ts": {
@@ -2258,6 +3286,282 @@
         },
         "type": "object",
         "title": "ProcessOut"
+      },
+      "ResultSetCreate": {
+        "properties": {
+          "server_id": {
+            "type": "integer",
+            "title": "Server Id"
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Path",
+            "description": "结果集目录在服务器上的绝对路径，目录内需有 predictions.jsonl"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name",
+            "description": "不填时取 meta.json 的 name 或目录名"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id",
+            "description": "产生该结果的任务"
+          }
+        },
+        "type": "object",
+        "required": [
+          "server_id",
+          "path"
+        ],
+        "title": "ResultSetCreate"
+      },
+      "ResultSetOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "server_id": {
+            "type": "integer",
+            "title": "Server Id"
+          },
+          "server_name": {
+            "type": "string",
+            "title": "Server Name"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta",
+            "description": "meta.json 的内容（模型、数据集、参数等）"
+          },
+          "sample_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sample Count"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "metrics": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Metrics",
+            "description": "每个指标最近一次成功评测的值",
+            "default": {}
+          },
+          "evaluating": {
+            "type": "boolean",
+            "title": "Evaluating",
+            "description": "是否有进行中的评测",
+            "default": false
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "server_id",
+          "server_name",
+          "path",
+          "meta",
+          "created_at"
+        ],
+        "title": "ResultSetOut"
+      },
+      "ResultSetUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "title": "ResultSetUpdate"
+      },
+      "SampleCompare": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SampleCompareItem"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "offset",
+          "items"
+        ],
+        "title": "SampleCompare"
+      },
+      "SampleCompareItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "results": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Results",
+            "description": "结果集 ID -> 该样本的记录（含 metrics），缺失为 null"
+          },
+          "spread": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spread",
+            "description": "排序指标在各结果集之间的最大差值"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "results"
+        ],
+        "title": "SampleCompareItem"
+      },
+      "SamplePage": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Items",
+            "description": "predictions.jsonl 的原始记录，另加 metrics 字段（该样本的逐样本指标）；图片字段为相对路径，用 /api/results/{id}/file?path= 读取"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "offset",
+          "items"
+        ],
+        "title": "SamplePage"
       },
       "ServerCreate": {
         "properties": {
