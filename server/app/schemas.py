@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from typing import Literal
 
@@ -29,7 +30,10 @@ class DeviceOut(BaseModel):
     power_limit_w: float | None = None
     health: str | None = None
     processes: list[ProcessOut] = []
-    idle: bool = Field(default=False, description="是否空闲：服务器在线、健康、无进程、显存占用低于阈值")
+    idle: bool = Field(
+        default=False, description="是否空闲：服务器在线、健康、无进程、显存占用低于阈值，且未被平台任务占用"
+    )
+    job_id: int | None = Field(default=None, description="占用该卡的平台任务 ID")
     updated_at: datetime | None = None
 
 
@@ -154,3 +158,79 @@ class Overview(BaseModel):
     devices_idle: int
     devices_busy: int
     by_accelerator: dict[str, AcceleratorSummary] = Field(description="按 gpu / npu 汇总")
+    jobs_queued: int = Field(description="排队中的任务数")
+    jobs_running: int = Field(description="启动中和运行中的任务数")
+    jobs_lost: int = Field(description="失联的任务数")
+
+
+JobStatus = Literal["queued", "starting", "running", "lost", "succeeded", "failed", "cancelled"]
+_ENV_KEY = r"^[A-Za-z_][A-Za-z0-9_]*$"
+
+
+class JobCreate(BaseModel):
+    name: str | None = Field(default=None, max_length=255, description="任务名称，不填时取命令开头")
+    command: str = Field(min_length=1, description="要执行的 shell 命令，以 bash -l 运行")
+    workdir: str | None = Field(default=None, description="工作目录，默认为 Agent 运行用户的家目录")
+    env: dict[str, str] = Field(default={}, description="额外的环境变量")
+    num_devices: int = Field(default=1, ge=0, le=64, description="需要的卡数，0 表示不需要卡（如 CPU 评测）")
+    group: str | None = Field(default=None, description="运行组，为空表示不限")
+    accelerator: Literal["gpu", "npu"] | None = Field(default=None, description="加速卡类型，为空表示不限")
+    server_id: int | None = Field(default=None, description="指定服务器，为空表示由调度器选择")
+    priority: int = Field(default=0, ge=-100, le=100, description="优先级，越大越先调度")
+    submitter: str | None = Field(default=None, max_length=128, description="提交人")
+
+    @field_validator("env")
+    @classmethod
+    def _check_env(cls, value):
+        for key in value:
+            if not re.match(_ENV_KEY, key):
+                raise ValueError(f"非法的环境变量名: {key}")
+        return value
+
+
+class JobUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    priority: int | None = Field(default=None, ge=-100, le=100, description="只有排队中的任务可以修改优先级")
+
+
+class JobOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    command: str
+    workdir: str | None = None
+    env: dict[str, str] = {}
+    num_devices: int
+    group: str | None = None
+    accelerator: str | None = None
+    server_id: int | None = None
+    priority: int
+    submitter: str | None = None
+    status: JobStatus = Field(
+        description="queued 排队中 / starting 启动中 / running 运行中 / lost 失联 / "
+        "succeeded 成功 / failed 失败 / cancelled 已取消"
+    )
+    queue_position: int | None = Field(default=None, description="排队中的任务在队列中的位置，从 1 开始")
+    assigned_server_id: int | None = None
+    assigned_server_name: str | None = None
+    device_indices: list[int] = Field(default=[], description="分配到的卡号")
+    pid: int | None = None
+    exit_code: int | None = None
+    error: str | None = None
+    requeued_from: int | None = Field(default=None, description="由哪个任务重新排队而来")
+    created_at: datetime
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class JobPage(BaseModel):
+    total: int
+    items: list[JobOut]
+
+
+class JobLog(BaseModel):
+    offset: int = Field(description="本次读取的起始字节位置")
+    next_offset: int = Field(description="下次增量读取时传入的 offset")
+    size: int = Field(description="日志文件当前总字节数")
+    data: str

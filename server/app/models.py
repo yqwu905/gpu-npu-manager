@@ -80,3 +80,43 @@ class DeviceMetric(Base):
     memory_used_mb: Mapped[float | None] = mapped_column(Float, nullable=True)
     temperature: Mapped[float | None] = mapped_column(Float, nullable=True)
     power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+JOB_ACTIVE_STATUSES = ("starting", "running", "lost")
+JOB_FINISHED_STATUSES = ("succeeded", "failed", "cancelled")
+
+
+class Job(Base):
+    """任务：在单台服务器上运行的一条命令。"""
+
+    __tablename__ = "jobs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    command: Mapped[str] = mapped_column(Text)
+    workdir: Mapped[str | None] = mapped_column(Text, nullable=True)
+    env: Mapped[dict] = mapped_column(JSON, default=dict)
+    num_devices: Mapped[int] = mapped_column(Integer, default=1)
+    # 调度约束：运行组、加速卡类型、指定服务器，均可为空表示不限
+    group: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    accelerator: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    server_id: Mapped[int | None] = mapped_column(ForeignKey("servers.id", ondelete="SET NULL"), nullable=True)
+    priority: Mapped[int] = mapped_column(Integer, default=0)
+    submitter: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+
+    # queued / starting / running / lost / succeeded / failed / cancelled
+    status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
+    assigned_server_id: Mapped[int | None] = mapped_column(
+        ForeignKey("servers.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    device_indices: Mapped[list] = mapped_column(JSON, default=list)
+    pid: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requeued_from: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    assigned_server: Mapped[Server | None] = relationship(foreign_keys=[assigned_server_id])

@@ -9,7 +9,7 @@
 | 里程碑 | 状态 |
 | --- | --- |
 | 1. 服务器与卡状态（Agent 采集、属性管理、分组筛选） | 已完成 |
-| 2. 任务调度 | 未开始 |
+| 2. 任务调度（排队、分配卡、取消、重排、日志） | 已完成 |
 | 3. 推理结果与评测 | 未开始 |
 | 4. 前端对接 | 未开始 |
 
@@ -31,7 +31,7 @@ scripts/        辅助脚本
 sudo ./install.sh <运行用户> <token> [端口，默认 9100]
 ```
 
-Agent 会自动检测 `nvidia-smi` 或 `npu-smi`。命令不在 PATH 中时，可在 `/etc/gnm-agent.env` 里用 `GNM_NVIDIA_SMI` / `GNM_NPU_SMI` 指定路径。
+Agent 会自动检测 `nvidia-smi` 或 `npu-smi`。任务以安装时指定的运行用户执行，任务记录和日志保存在该用户的 `~/.gnm-agent/jobs/`（可用 `GNM_AGENT_DATA_DIR` 修改）。命令不在 PATH 中时，可在 `/etc/gnm-agent.env` 里用 `GNM_NVIDIA_SMI` / `GNM_NPU_SMI` 指定路径。
 
 > `npu-smi info` 的解析目前基于公开资料中的 910B 和 310P 输出样例，接入真实机器后需要核对一次。
 
@@ -54,6 +54,8 @@ GNM_AGENT_TOKEN=<token> uvicorn app.main:create_app --factory --host 0.0.0.0 --p
 | `GNM_HISTORY_DAYS` | `7` | 趋势数据保留天数 |
 | `GNM_IDLE_MEMORY_MB_GPU` | `1024` | GPU 空闲判定的显存阈值（MB） |
 | `GNM_IDLE_MEMORY_MB_NPU` | `6144` | NPU 空闲判定的 HBM 阈值（MB），空载时也有 3~4 GB 占用 |
+| `GNM_SCHEDULE_INTERVAL` | `5` | 调度器扫描队列的间隔（秒） |
+| `GNM_SCHEDULE_STRICT` | `0` | 设为 `1` 时严格按队列顺序调度，前面的任务放不下时后面的也不调度 |
 
 ## 开发
 

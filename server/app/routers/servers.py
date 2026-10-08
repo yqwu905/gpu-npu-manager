@@ -2,13 +2,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from ..config import Settings
 from ..deps import get_session, get_settings
-from ..models import DeviceMetric, Server
+from ..models import JOB_ACTIVE_STATUSES, DeviceMetric, Job, Server
 from ..schemas import (
     DeviceHistory,
     FilterOptions,
@@ -19,7 +19,7 @@ from ..schemas import (
     ServerUpdate,
 )
 from ..timeutil import as_utc
-from ..views import server_out
+from ..views import occupied_devices, server_out
 
 router = APIRouter(prefix="/api", tags=["servers"])
 
@@ -110,8 +110,9 @@ def list_servers(
     settings: Settings = Depends(get_settings),
 ):
     result = []
+    occupied = occupied_devices(session)
     for server in _load_servers(session):
-        out = server_out(server, settings, include_devices)
+        out = server_out(server, settings, include_devices, occupied)
         if filters.match(out):
             result.append(out)
     return result
@@ -126,8 +127,9 @@ def grouped_servers(
     settings: Settings = Depends(get_settings),
 ):
     groups: dict[str | None, list[ServerOut]] = {}
+    occupied = occupied_devices(session)
     for server in _load_servers(session):
-        out = server_out(server, settings, include_devices)
+        out = server_out(server, settings, include_devices, occupied)
         if not filters.match(out):
             continue
         for key in _group_keys(out, by):
@@ -179,7 +181,7 @@ def create_server(
 
 @router.get("/servers/{server_id}", response_model=ServerOut, summary="服务器详情")
 def get_server(server_id: int, session: Session = Depends(get_session), settings: Settings = Depends(get_settings)):
-    return server_out(_get_server(session, server_id), settings)
+    return server_out(_get_server(session, server_id), settings, occupied=occupied_devices(session))
 
 
 @router.patch("/servers/{server_id}", response_model=ServerOut, summary="修改服务器属性")
@@ -195,12 +197,17 @@ def update_server(
             raise HTTPException(422, f"{field} 不能为空")
         setattr(server, field, value)
     _commit(session)
-    return server_out(server, settings)
+    return server_out(server, settings, occupied=occupied_devices(session))
 
 
 @router.delete("/servers/{server_id}", status_code=204, summary="删除服务器")
 def delete_server(server_id: int, session: Session = Depends(get_session)):
     server = _get_server(session, server_id)
+    active = session.scalar(
+        select(func.count()).where(Job.assigned_server_id == server_id, Job.status.in_(JOB_ACTIVE_STATUSES))
+    )
+    if active:
+        raise HTTPException(409, "该服务器上还有运行中的任务，请先取消")
     session.query(DeviceMetric).filter(DeviceMetric.server_id == server_id).delete()
     session.delete(server)
     session.commit()
@@ -213,7 +220,7 @@ async def refresh_server(server_id: int, request: Request):
     settings = request.app.state.settings
     await poller.poll([server_id])
     with request.app.state.session_factory() as session:
-        return server_out(_get_server(session, server_id), settings)
+        return server_out(_get_server(session, server_id), settings, occupied=occupied_devices(session))
 
 
 @router.get("/servers/{server_id}/history", response_model=list[DeviceHistory], summary="卡的历史趋势")

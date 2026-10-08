@@ -4,6 +4,11 @@
 部署在每台服务器上，只依赖 Python 标准库（3.7+），通过 HTTP 向中心服务提供：
 - GET /v1/health   存活检查
 - GET /v1/status   主机概况与所有加速卡状态
+- POST /v1/jobs                启动任务进程
+- GET  /v1/jobs                本机所有任务记录
+- GET  /v1/jobs/{id}           任务状态（running / exited）与退出码
+- POST /v1/jobs/{id}/kill      终止任务的整个进程组
+- GET  /v1/jobs/{id}/log       按字节偏移量读取任务日志
 
 所有请求需带请求头 X-Agent-Token，与启动参数 --token（或环境变量 GNM_AGENT_TOKEN）一致。
 """
@@ -14,12 +19,14 @@ import os
 import pwd
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
+from urllib.parse import parse_qs, urlparse
 
 AGENT_VERSION = "0.1.0"
 SMI_TIMEOUT = 15
@@ -369,6 +376,14 @@ class Collector(object):
         self.nvidia_smi = os.environ.get("GNM_NVIDIA_SMI") or shutil.which("nvidia-smi")
         self.npu_smi = os.environ.get("GNM_NPU_SMI") or shutil.which("npu-smi")
 
+    @property
+    def accelerator(self):
+        if self.nvidia_smi:
+            return "gpu"
+        if self.npu_smi:
+            return "npu"
+        return None
+
     def status(self):
         errors = []
         devices = []
@@ -410,6 +425,217 @@ class Collector(object):
 
 
 # ---------------------------------------------------------------------------
+# 任务进程管理
+# ---------------------------------------------------------------------------
+
+_JOB_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
+_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+KILL_GRACE_SECONDS = 10
+MAX_LOG_CHUNK = 1024 * 1024
+
+# 外层 sh 负责在命令结束后把退出码写入文件，这样 Agent 重启后仍能拿到退出码。
+# 命令用 bash -l 执行，以加载登录用户的环境（如 conda）。
+_WRAPPER = 'bash -lc "$1"; echo $? > "$2"'
+
+
+class JobError(Exception):
+    def __init__(self, code, message):
+        Exception.__init__(self, message)
+        self.code = code
+        self.message = message
+
+
+def _proc_start_ticks(pid):
+    """读取 /proc/<pid>/stat 中的进程启动时间，用于防止 PID 复用误判；进程不存在或已僵死返回 None。"""
+    try:
+        with open("/proc/{}/stat".format(pid)) as f:
+            fields = f.read().rsplit(")", 1)[1].split()
+    except (OSError, IndexError):
+        return None
+    if fields[0] == "Z":
+        return None
+    return int(fields[19])
+
+
+def _decode_utf8_prefix(data):
+    """解码字节串；结尾被截断的多字节字符留到下一次读取。返回 (文本, 实际消费的字节数)。"""
+    for cut in range(0, 4):
+        end = len(data) - cut
+        if end < 0:
+            break
+        try:
+            return data[:end].decode("utf-8"), end
+        except UnicodeDecodeError:
+            continue
+    return data.decode("utf-8", errors="replace"), len(data)
+
+
+class JobManager(object):
+    def __init__(self, data_dir, accelerator):
+        self.dir = os.path.join(data_dir, "jobs")
+        if not os.path.isdir(self.dir):
+            os.makedirs(self.dir)
+        self.accelerator = accelerator
+        self.lock = threading.Lock()
+
+    def _path(self, job_id, suffix):
+        return os.path.join(self.dir, job_id + suffix)
+
+    def _load(self, job_id):
+        if not _JOB_ID_RE.match(job_id or ""):
+            raise JobError(400, "非法的任务 ID")
+        try:
+            with open(self._path(job_id, ".json")) as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            raise JobError(404, "任务不存在")
+
+    def _save(self, meta):
+        tmp = self._path(meta["job_id"], ".json.tmp")
+        with open(tmp, "w") as f:
+            json.dump(meta, f, ensure_ascii=False)
+        os.rename(tmp, self._path(meta["job_id"], ".json"))
+
+    def _alive(self, meta):
+        ticks = _proc_start_ticks(meta["pid"])
+        return ticks is not None and ticks == meta.get("start_ticks")
+
+    def _info(self, meta):
+        alive = self._alive(meta)
+        exit_code = None
+        if not alive:
+            try:
+                with open(meta["exit_path"]) as f:
+                    exit_code = int(f.read().strip())
+            except (OSError, ValueError):
+                exit_code = None  # 被信号终止时没有退出码文件
+        return {
+            "job_id": meta["job_id"],
+            "pid": meta["pid"],
+            "state": "running" if alive else "exited",
+            "exit_code": exit_code,
+            "killed": meta.get("killed", False),
+            "devices": meta["devices"],
+            "started_at": meta["started_at"],
+            "log_size": os.path.getsize(meta["log_path"]) if os.path.exists(meta["log_path"]) else 0,
+        }
+
+    def start(self, spec):
+        job_id = str(spec.get("job_id") or "")
+        if not _JOB_ID_RE.match(job_id):
+            raise JobError(400, "非法的任务 ID")
+        command = spec.get("command")
+        if not isinstance(command, str) or not command.strip():
+            raise JobError(400, "command 不能为空")
+        workdir = os.path.expanduser(spec.get("workdir") or "~")
+        if not os.path.isdir(workdir):
+            raise JobError(400, "工作目录不存在: {}".format(workdir))
+        devices = [int(d) for d in spec.get("devices") or []]
+        extra_env = spec.get("env") or {}
+        for key in extra_env:
+            if not _ENV_KEY_RE.match(key):
+                raise JobError(400, "非法的环境变量名: {}".format(key))
+
+        with self.lock:
+            # 幂等：同一个任务 ID 重复提交时直接返回已有记录
+            if os.path.exists(self._path(job_id, ".json")):
+                return self._info(self._load(job_id))
+
+            env = os.environ.copy()
+            env.update({k: str(v) for k, v in extra_env.items()})
+            visible = ",".join(str(d) for d in devices)
+            if self.accelerator == "npu":
+                if devices:
+                    env["ASCEND_RT_VISIBLE_DEVICES"] = visible
+            else:
+                # 不分配卡时设为空字符串，进程看不到任何 GPU
+                env["CUDA_VISIBLE_DEVICES"] = visible
+            env["GNM_JOB_ID"] = job_id
+
+            log_path = self._path(job_id, ".log")
+            exit_path = self._path(job_id, ".exit")
+            with open(log_path, "ab") as log_file:
+                try:
+                    proc = subprocess.Popen(
+                        ["/bin/sh", "-c", _WRAPPER, "sh", command, exit_path],
+                        cwd=workdir,
+                        env=env,
+                        stdin=subprocess.DEVNULL,
+                        stdout=log_file,
+                        stderr=subprocess.STDOUT,
+                        start_new_session=True,
+                    )
+                except OSError as exc:
+                    raise JobError(500, "启动失败: {}".format(exc))
+            # 回收子进程，避免产生僵尸进程
+            threading.Thread(target=proc.wait, daemon=True).start()
+            meta = {
+                "job_id": job_id,
+                "pid": proc.pid,
+                "start_ticks": _proc_start_ticks(proc.pid),
+                "command": command,
+                "workdir": workdir,
+                "devices": devices,
+                "log_path": log_path,
+                "exit_path": exit_path,
+                "started_at": time.time(),
+            }
+            self._save(meta)
+            log.info("job %s started, pid=%s devices=%s", job_id, proc.pid, visible)
+            return self._info(meta)
+
+    def get(self, job_id):
+        return self._info(self._load(job_id))
+
+    def list(self):
+        jobs = []
+        for name in sorted(os.listdir(self.dir)):
+            if name.endswith(".json"):
+                try:
+                    jobs.append(self.get(name[: -len(".json")]))
+                except JobError:
+                    continue
+        return jobs
+
+    def kill(self, job_id):
+        meta = self._load(job_id)
+        if self._alive(meta):
+            meta["killed"] = True
+            self._save(meta)
+            self._signal(meta, signal.SIGTERM)
+
+            def force():
+                time.sleep(KILL_GRACE_SECONDS)
+                if self._alive(meta):
+                    self._signal(meta, signal.SIGKILL)
+
+            threading.Thread(target=force, daemon=True).start()
+        return self._info(meta)
+
+    @staticmethod
+    def _signal(meta, sig):
+        try:
+            os.killpg(meta["pid"], sig)
+        except OSError:
+            pass
+
+    def read_log(self, job_id, offset, limit):
+        meta = self._load(job_id)
+        limit = max(1, min(limit, MAX_LOG_CHUNK))
+        try:
+            with open(meta["log_path"], "rb") as f:
+                f.seek(0, os.SEEK_END)
+                size = f.tell()
+                offset = max(0, min(offset, size))
+                f.seek(offset)
+                chunk = f.read(limit)
+        except OSError:
+            size, chunk, offset = 0, b"", 0
+        text, used = _decode_utf8_prefix(chunk)
+        return {"offset": offset, "next_offset": offset + used, "size": size, "data": text}
+
+
+# ---------------------------------------------------------------------------
 # HTTP 服务
 # ---------------------------------------------------------------------------
 
@@ -418,7 +644,7 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
 
-def make_handler(collector, token):
+def make_handler(collector, jobs, token):
     class Handler(BaseHTTPRequestHandler):
         server_version = "gnm-agent/" + AGENT_VERSION
 
@@ -433,24 +659,64 @@ def make_handler(collector, token):
             self.end_headers()
             self.wfile.write(body)
 
-        def do_GET(self):
+        def _authorized(self):
             if token and self.headers.get("X-Agent-Token") != token:
                 self._send(401, {"error": "invalid token"})
+                return False
+            return True
+
+        def _read_json(self):
+            length = int(self.headers.get("Content-Length") or 0)
+            if not length:
+                return {}
+            try:
+                return json.loads(self.rfile.read(length).decode("utf-8"))
+            except ValueError:
+                raise JobError(400, "请求体不是合法 JSON")
+
+        def _dispatch(self, method):
+            if not self._authorized():
                 return
-            path = self.path.split("?", 1)[0]
-            if path == "/v1/health":
-                self._send(200, {"ok": True, "agent_version": AGENT_VERSION})
-            elif path == "/v1/status":
-                self._send(200, collector.status())
-            else:
-                self._send(404, {"error": "not found"})
+            url = urlparse(self.path)
+            parts = [p for p in url.path.split("/") if p]
+            query = parse_qs(url.query)
+            try:
+                if method == "GET" and parts == ["v1", "health"]:
+                    self._send(200, {"ok": True, "agent_version": AGENT_VERSION})
+                elif method == "GET" and parts == ["v1", "status"]:
+                    self._send(200, collector.status())
+                elif method == "GET" and parts == ["v1", "jobs"]:
+                    self._send(200, {"jobs": jobs.list()})
+                elif method == "POST" and parts == ["v1", "jobs"]:
+                    self._send(200, jobs.start(self._read_json()))
+                elif method == "GET" and len(parts) == 3 and parts[:2] == ["v1", "jobs"]:
+                    self._send(200, jobs.get(parts[2]))
+                elif method == "POST" and len(parts) == 4 and parts[:2] == ["v1", "jobs"] and parts[3] == "kill":
+                    self._send(200, jobs.kill(parts[2]))
+                elif method == "GET" and len(parts) == 4 and parts[:2] == ["v1", "jobs"] and parts[3] == "log":
+                    offset = int(query.get("offset", ["0"])[0])
+                    limit = int(query.get("limit", [str(64 * 1024)])[0])
+                    self._send(200, jobs.read_log(parts[2], offset, limit))
+                else:
+                    self._send(404, {"error": "not found"})
+            except JobError as exc:
+                self._send(exc.code, {"error": exc.message})
+            except (ValueError, TypeError) as exc:
+                self._send(400, {"error": str(exc)})
+
+        def do_GET(self):
+            self._dispatch("GET")
+
+        def do_POST(self):
+            self._dispatch("POST")
 
     return Handler
 
 
-def build_server(host, port, token, disk_paths):
+def build_server(host, port, token, disk_paths, data_dir):
     collector = Collector(disk_paths)
-    return ThreadingHTTPServer((host, port), make_handler(collector, token))
+    jobs = JobManager(data_dir, collector.accelerator)
+    return ThreadingHTTPServer((host, port), make_handler(collector, jobs, token))
 
 
 def main():
@@ -464,6 +730,11 @@ def main():
         default=None,
         help="需要上报使用率的磁盘挂载点，可重复，默认 /",
     )
+    parser.add_argument(
+        "--data-dir",
+        default=os.environ.get("GNM_AGENT_DATA_DIR", os.path.expanduser("~/.gnm-agent")),
+        help="任务记录和日志的存放目录，默认 ~/.gnm-agent",
+    )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -473,7 +744,7 @@ def main():
     )
     if not args.token:
         log.warning("未设置 token，任何人都可以访问本 Agent")
-    server = build_server(args.host, args.port, args.token, args.disk or ["/"])
+    server = build_server(args.host, args.port, args.token, args.disk or ["/"], args.data_dir)
     log.info("gnm-agent %s 监听 %s:%s", AGENT_VERSION, args.host, args.port)
     server.serve_forever()
 

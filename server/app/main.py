@@ -6,7 +6,8 @@ from fastapi import FastAPI
 from .config import Settings
 from .db import Base, make_engine, make_session_factory
 from .poller import Poller
-from .routers import overview, servers
+from .routers import jobs, overview, servers
+from .scheduler import Scheduler
 
 
 def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTransport | None = None) -> FastAPI:
@@ -15,12 +16,15 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
     Base.metadata.create_all(engine)
     session_factory = make_session_factory(engine)
     poller = Poller(settings, session_factory, transport=transport)
+    scheduler = Scheduler(settings, session_factory, transport=transport)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         if settings.enable_poller:
             poller.start()
+            scheduler.start()
         yield
+        await scheduler.stop()
         await poller.stop()
 
     app = FastAPI(
@@ -32,7 +36,9 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
     app.state.settings = settings
     app.state.session_factory = session_factory
     app.state.poller = poller
+    app.state.scheduler = scheduler
     app.include_router(overview.router)
     app.include_router(servers.router)
+    app.include_router(jobs.router)
     return app
 
