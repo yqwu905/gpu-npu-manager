@@ -15,7 +15,7 @@
 | 服务器分组视图 | `GET /api/servers/grouped?by=group\|owner\|tag\|accelerator\|model\|status` |
 | 服务器详情 | `GET /api/servers/{id}`、`GET /api/servers/{id}/history`、`POST /api/servers/{id}/refresh` |
 | 添加 / 编辑服务器 | `POST /api/servers`、`PATCH /api/servers/{id}`、`DELETE /api/servers/{id}` |
-| 任务队列 / 任务列表 | `GET /api/jobs` |
+| 任务队列 / 任务列表 | `GET /api/jobs`、`GET /api/scheduler`、`PATCH /api/scheduler` |
 | 提交任务 | `POST /api/jobs`（运行组候选值来自 `GET /api/meta/filters`） |
 | 结果集列表 / 登记 | `GET /api/results`、`POST /api/results` |
 | 结果集详情（样本浏览） | `GET /api/results/{id}`、`GET /api/results/{id}/samples`、`GET /api/results/{id}/file`、`GET /api/evaluations?result_set_id=` |
@@ -151,7 +151,7 @@
 
 ## 任务
 
-任务是在单台服务器上运行的一条 shell 命令（以 Agent 运行用户的 `bash -l` 执行）。调度器每 5 秒扫描一次队列：按优先级从高到低、提交时间从早到晚，为每个任务在满足条件的服务器中找足够的空闲卡；多台都满足时选空闲卡最少的那台，减少碎片。排在前面的任务放不下时，默认允许后面的小任务先运行（回填）。
+任务是在单台服务器上运行的一条 shell 命令（以 Agent 运行用户的 `bash -l` 执行）。调度器每 5 秒扫描一次队列：按优先级从高到低、提交时间从早到晚，为每个任务在满足条件的服务器中找足够的空闲卡；多台都满足时选空闲卡最少的那台，减少碎片。排在前面的任务放不下时，默认允许后面的小任务先运行（回填）；切换为严格按序后，前面的任务放不下时后面的任务也不调度（见 `/api/scheduler`）。
 
 分配到的卡号通过 `CUDA_VISIBLE_DEVICES`（GPU）或 `ASCEND_RT_VISIBLE_DEVICES`（NPU）传给进程，另有 `GNM_JOB_ID` 环境变量。
 
@@ -159,7 +159,7 @@
 
 | 状态 | 含义 | 可做的操作 |
 | --- | --- | --- |
-| `queued` | 排队中，`queue_position` 为队列位置 | 取消、改优先级 |
+| `queued` | 排队中，`queue_position` 为队列位置，`wait_reason` 为等待原因 | 取消、改优先级 |
 | `starting` | 已分配卡，正在启动 | 取消 |
 | `running` | 运行中 | 取消、看日志 |
 | `lost` | 服务器离线，失联；恢复后自动对账 | 取消（需 `force=true`） |
@@ -186,7 +186,12 @@
 
 只有 `command` 必填。`name` 不填时取命令第一行；`num_devices` 默认 1，可以为 0（不需要卡）；`group`、`accelerator`（`gpu`/`npu`）、`server_id` 为空表示不限；`priority` 范围 -100 到 100，越大越先调度。没有任何服务器能满足条件（运行组、类型、卡数）时返回 422。
 
-返回 `JobOut`：
+返回 `JobOut`。排队中的任务 `wait_reason` 说明为什么还没被调度，每轮调度更新，刚提交还没经过一轮调度时为 `null`，例如：
+
+- `组 cv：单台服务器最多空闲 3 张卡，需要 4 张`
+- `组 nlp：没有在线且可调度的服务器`
+- `严格按序调度，等待前面的任务 #41（resnet50-train）先启动`
+
 
 ```json
 {
@@ -194,7 +199,7 @@
   "workdir": "/home/alice/project", "env": {"BATCH_SIZE": "64"},
   "num_devices": 2, "group": "cv", "accelerator": null, "server_id": null,
   "priority": 0, "submitter": "alice",
-  "status": "running", "queue_position": null,
+  "status": "running", "queue_position": null, "wait_reason": null,
   "assigned_server_id": 3, "assigned_server_name": "gpu-03", "device_indices": [0, 1],
   "pid": 12345, "exit_code": null, "error": null, "requeued_from": null,
   "created_at": "2026-10-08T14:00:00Z", "started_at": "2026-10-08T14:00:05Z", "finished_at": null
@@ -229,6 +234,14 @@
 ### POST /api/jobs/{id}/requeue
 
 以相同参数创建一个新任务（`requeued_from` 指向原任务），只能对已结束的任务操作，返回新任务。
+
+### GET /api/scheduler
+
+查询调度模式，返回 `{"strict_order": false}`。`false` 允许回填，`true` 严格按队列顺序调度。
+
+### PATCH /api/scheduler
+
+切换调度模式，请求体 `{"strict_order": true}`，返回切换后的值，下一轮调度生效。只保存在内存中，中心服务重启后恢复为环境变量 `GNM_SCHEDULE_STRICT` 的值。
 
 ### GET /api/jobs/{id}/log?offset=0&limit=65536
 

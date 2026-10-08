@@ -50,6 +50,21 @@ def _requeue(job: Job, error: str) -> None:
     job.pid = None
 
 
+def _wait_reason(job: Job, matching: list[Server], free: dict[int, list[int]]) -> str:
+    scope = []
+    if job.server_id is not None:
+        scope.append(f"指定服务器 #{job.server_id}")
+    if job.group is not None:
+        scope.append(f"组 {job.group}")
+    if job.accelerator is not None:
+        scope.append(job.accelerator.upper())
+    scope = " ".join(scope) or "所有服务器"
+    if not matching:
+        return f"{scope}：没有在线且可调度的服务器"
+    most = max(len(free[s.id]) for s in matching)
+    return f"{scope}：单台服务器最多空闲 {most} 张卡，需要 {job.num_devices} 张"
+
+
 @dataclass
 class Launch:
     job_id: int
@@ -80,6 +95,10 @@ class Scheduler:
         self._lock = asyncio.Lock()
         # 每轮调度后执行的回调（如回收评测结果）
         self.after_round: list = []
+        # 调度模式，运行期可通过接口切换，重启后恢复为环境变量的值
+        self.strict_order = settings.schedule_strict
+        # 排队任务没被调度的原因，每轮调度重新计算
+        self.wait_reasons: dict[int, str] = {}
 
     # ------------------------------------------------------------------
     # 同步运行中任务
@@ -150,18 +169,24 @@ class Scheduler:
                 s.id: [d.index for d in s.devices if device_is_idle(s, d, self.settings, occupied)] for s in servers
             }
             launches = []
+            reasons = {}
+            blocker = None
             for job in session.scalars(queue_order(select(Job).where(Job.status == "queued"))):
-                candidates = [
+                if blocker is not None:
+                    reasons[job.id] = f"严格按序调度，等待前面的任务 #{blocker.id}（{blocker.name}）先启动"
+                    continue
+                matching = [
                     s
                     for s in servers
                     if (job.group is None or s.group == job.group)
                     and (job.accelerator is None or s.accelerator == job.accelerator)
                     and (job.server_id is None or s.id == job.server_id)
-                    and len(free[s.id]) >= job.num_devices
                 ]
+                candidates = [s for s in matching if len(free[s.id]) >= job.num_devices]
                 if not candidates:
-                    if self.settings.schedule_strict:
-                        break
+                    reasons[job.id] = _wait_reason(job, matching, free)
+                    if self.strict_order:
+                        blocker = job
                     continue
                 # 选空闲卡最少但足够的服务器，减少碎片
                 server = min(candidates, key=lambda s: (len(free[s.id]), s.name))
@@ -175,6 +200,7 @@ class Scheduler:
                     Launch(job.id, server.host, server.port, job.command, job.workdir, job.env or {}, devices)
                 )
             session.commit()
+            self.wait_reasons = reasons
             return launches
 
     def _launched(self, job_id: int, info: dict) -> bool:

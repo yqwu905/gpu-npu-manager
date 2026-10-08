@@ -6,7 +6,7 @@ from ..agent_client import AgentError
 from ..deps import get_session
 from ..models import JOB_ACTIVE_STATUSES, JOB_FINISHED_STATUSES, Job, Server, utcnow
 from ..scheduler import queue_order
-from ..schemas import JobCreate, JobLog, JobOut, JobPage, JobStatus, JobUpdate
+from ..schemas import JobCreate, JobLog, JobOut, JobPage, JobStatus, JobUpdate, SchedulerSettings
 from ..timeutil import as_utc
 
 router = APIRouter(prefix="/api", tags=["jobs"])
@@ -19,10 +19,12 @@ def _queue_positions(session: Session) -> dict[int, int]:
     return {job_id: pos for pos, job_id in enumerate(ids, start=1)}
 
 
-def job_out(job: Job, positions: dict[int, int] | None = None) -> JobOut:
+def job_out(job: Job, positions: dict[int, int] | None = None, reasons: dict[int, str] | None = None) -> JobOut:
     out = JobOut.model_validate(job)
     out.assigned_server_name = job.assigned_server.name if job.assigned_server else None
     out.queue_position = (positions or {}).get(job.id)
+    if job.status == "queued":
+        out.wait_reason = (reasons or {}).get(job.id)
     out.created_at = as_utc(job.created_at)
     out.started_at = as_utc(job.started_at)
     out.finished_at = as_utc(job.finished_at)
@@ -64,6 +66,7 @@ def create_job(body: JobCreate, session: Session = Depends(get_session)):
 
 @router.get("/jobs", response_model=JobPage, summary="任务列表")
 def list_jobs(
+    request: Request,
     status: list[JobStatus] | None = Query(None, description="状态，可多个"),
     group: str | None = Query(None, description="运行组"),
     submitter: str | None = Query(None, description="提交人"),
@@ -92,12 +95,13 @@ def list_jobs(
         query = query.order_by(Job.id.desc())
     jobs = session.scalars(query.options(selectinload(Job.assigned_server)).limit(limit).offset(offset))
     positions = _queue_positions(session)
-    return JobPage(total=total, items=[job_out(j, positions) for j in jobs])
+    reasons = request.app.state.scheduler.wait_reasons
+    return JobPage(total=total, items=[job_out(j, positions, reasons) for j in jobs])
 
 
 @router.get("/jobs/{job_id}", response_model=JobOut, summary="任务详情")
-def get_job(job_id: int, session: Session = Depends(get_session)):
-    return job_out(_get_job(session, job_id), _queue_positions(session))
+def get_job(job_id: int, request: Request, session: Session = Depends(get_session)):
+    return job_out(_get_job(session, job_id), _queue_positions(session), request.app.state.scheduler.wait_reasons)
 
 
 @router.patch("/jobs/{job_id}", response_model=JobOut, summary="修改任务名称或优先级")
@@ -178,3 +182,15 @@ async def job_log(
         if exc.status == 404:
             return JobLog(offset=0, next_offset=0, size=0, data="")
         raise HTTPException(502, f"读取日志失败：{exc}")
+
+
+@router.get("/scheduler", response_model=SchedulerSettings, summary="查询调度模式")
+def get_scheduler(request: Request):
+    return SchedulerSettings(strict_order=request.app.state.scheduler.strict_order)
+
+
+@router.patch("/scheduler", response_model=SchedulerSettings, summary="切换调度模式")
+def update_scheduler(body: SchedulerSettings, request: Request):
+    # 只保存在内存中，重启后恢复为 GNM_SCHEDULE_STRICT 的值
+    request.app.state.scheduler.strict_order = body.strict_order
+    return SchedulerSettings(strict_order=body.strict_order)

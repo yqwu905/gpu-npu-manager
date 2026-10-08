@@ -59,7 +59,7 @@ GNM_AGENT_TOKEN=<token> uvicorn app.main:create_app --factory --host 0.0.0.0 --p
 | `GNM_IDLE_MEMORY_MB_GPU` | `1024` | GPU 空闲判定的显存阈值（MB） |
 | `GNM_IDLE_MEMORY_MB_NPU` | `6144` | NPU 空闲判定的 HBM 阈值（MB），空载时也有 3~4 GB 占用 |
 | `GNM_SCHEDULE_INTERVAL` | `5` | 调度器扫描队列的间隔（秒） |
-| `GNM_SCHEDULE_STRICT` | `0` | 设为 `1` 时严格按队列顺序调度，前面的任务放不下时后面的也不调度 |
+| `GNM_SCHEDULE_STRICT` | `0` | 设为 `1` 时严格按队列顺序调度，前面的任务放不下时后面的也不调度；运行期可用 `PATCH /api/scheduler` 切换 |
 | `GNM_EVAL_PYTHON` | `python3` | 各服务器上运行评测脚本的解释器，可改成 conda 环境中的 python 路径 |
 | `GNM_EVAL_SCRIPT` | `/opt/gnm-agent/evaluate.py` | 各服务器上评测脚本的路径 |
 

@@ -154,6 +154,30 @@ def test_priority_backfill_and_strict(tmp_path, cluster):
             assert job(c, small["id"])["status"] == expected
 
 
+def test_scheduler_mode_and_wait_reason(client):
+    assert client.get("/api/scheduler").json() == {"strict_order": False}
+    submit(client, num_devices=1, server_id=2)  # 先占用 srv-b 的 1 张卡
+    tick(client)
+    big = submit(client, num_devices=4, group="cv", priority=5)
+    small = submit(client, num_devices=4, group="cv")
+    assert job(client, big["id"])["wait_reason"] is None  # 还没经过一轮调度
+    assert client.patch("/api/scheduler", json={"strict_order": True}).json() == {"strict_order": True}
+    assert client.get("/api/scheduler").json() == {"strict_order": True}
+    tick(client)
+    assert job(client, big["id"])["wait_reason"] == "组 cv：单台服务器最多空闲 3 张卡，需要 4 张"
+    reason = f"严格按序调度，等待前面的任务 #{big['id']}（python train.py）先启动"
+    queued = client.get("/api/jobs", params={"status": "queued"}).json()["items"]
+    assert [j["wait_reason"] for j in queued] == [job(client, big["id"])["wait_reason"], reason]
+
+    # 运行组下没有在线服务器
+    npu = submit(client, num_devices=1, group="nlp")
+    client.patch("/api/servers/3", json={"schedulable": False})
+    client.patch("/api/scheduler", json={"strict_order": False})
+    tick(client)
+    assert job(client, small["id"])["wait_reason"] == "组 cv：单台服务器最多空闲 3 张卡，需要 4 张"
+    assert job(client, npu["id"])["wait_reason"] == "组 nlp：没有在线且可调度的服务器"
+
+
 def test_constraints(client):
     j_npu = submit(client, accelerator="npu", num_devices=8)
     j_server = submit(client, server_id=1, num_devices=1)
