@@ -1,4 +1,4 @@
-# 接口说明（第 1 步服务器与卡状态，第 2 步任务调度）
+# 接口说明（服务器与卡状态、任务调度、推理结果与评测）
 
 供前端设计和对接使用。完整字段定义见 [openapi.json](openapi.json)，服务启动后也可以访问 `http://<中心服务>/docs` 在线调试。
 
@@ -17,6 +17,10 @@
 | 添加 / 编辑服务器 | `POST /api/servers`、`PATCH /api/servers/{id}`、`DELETE /api/servers/{id}` |
 | 任务队列 / 任务列表 | `GET /api/jobs` |
 | 提交任务 | `POST /api/jobs`（运行组候选值来自 `GET /api/meta/filters`） |
+| 结果集列表 / 登记 | `GET /api/results`、`POST /api/results` |
+| 结果集详情（样本浏览） | `GET /api/results/{id}`、`GET /api/results/{id}/samples`、`GET /api/results/{id}/file`、`GET /api/evaluations?result_set_id=` |
+| 发起评测 | `GET /api/evaluators`、`POST /api/evaluations` |
+| 指标对比 | `GET /api/compare/metrics`、`GET /api/compare/samples` |
 | 任务详情与日志 | `GET /api/jobs/{id}`、`GET /api/jobs/{id}/log`、`POST /api/jobs/{id}/cancel`、`POST /api/jobs/{id}/requeue`、`PATCH /api/jobs/{id}` |
 
 ## 接口列表
@@ -229,6 +233,122 @@
 ### GET /api/jobs/{id}/log?offset=0&limit=65536
 
 增量读取日志，返回 `{"offset": 0, "next_offset": 2048, "size": 2048, "data": "..."}`。首次传 `offset=0`，之后传上次的 `next_offset`，可以实现滚动追加。还未启动的任务返回空内容。
+
+## 推理结果与评测
+
+结果集是某台服务器上的一个目录（格式见仓库 README 的“推理结果格式”），平台通过 Agent 读取，文件留在原服务器上。评测会作为普通任务提交到结果所在的服务器上运行（任务名为“评测 <结果集名>”，在任务列表中也能看到），输出写到结果目录下的 `eval/<评测 ID>/`。
+
+### GET /api/evaluators
+
+可选的指标及展示信息，`higher_is_better` 用于在对比表中标出更好的一方。
+
+```json
+[
+  {"name": "psnr", "label": "PSNR", "kind": "image", "unit": "dB", "higher_is_better": true, "description": "..."},
+  {"name": "ssim", "label": "SSIM", "kind": "image", "unit": null, "higher_is_better": true, "description": "..."},
+  {"name": "lpips", "label": "LPIPS", "kind": "image", "unit": null, "higher_is_better": false, "description": "..."},
+  {"name": "ocr_a", "label": "OCR-A", "kind": "text", "unit": null, "higher_is_better": true, "description": "..."},
+  {"name": "cer", "label": "CER", "kind": "text", "unit": null, "higher_is_better": false, "description": "..."},
+  {"name": "ned", "label": "1-NED", "kind": "text", "unit": null, "higher_is_better": true, "description": "..."}
+]
+```
+
+### POST /api/results
+
+登记一个结果集：`{"server_id": 3, "path": "/data/results/model-a", "name": "可选", "note": "可选", "job_id": null}`。平台会读取目录下的 `meta.json`（可选）并统计 `predictions.jsonl` 的样本数；目录不在 Agent 允许读取的范围或缺少 `predictions.jsonl` 时返回 422。
+
+返回 `ResultSetOut`：
+
+```json
+{
+  "id": 7, "name": "model-a", "server_id": 3, "server_name": "gpu-03",
+  "path": "/data/results/model-a",
+  "meta": {"model": "model-a", "dataset": "demo"},
+  "sample_count": 1000, "note": null, "job_id": null,
+  "metrics": {"psnr": 28.41, "ssim": 0.873, "ocr_a": 0.92, "cer": 0.031, "ned": 0.975},
+  "evaluating": false,
+  "created_at": "2026-10-08T15:00:00Z"
+}
+```
+
+`metrics` 是每个指标最近一次成功评测的值；还没评测过时为空对象。
+
+### GET /api/results
+
+结果集列表，按登记时间倒序，可用 `server_id`、`q` 筛选。`GET /api/results/{id}` 返回单个；`PATCH` 可改 `name`、`note`；`DELETE` 只删除登记，不删服务器上的文件。
+
+### GET /api/results/{id}/samples?offset=0&limit=50
+
+分页浏览样本，返回 `{"total": 1000, "offset": 0, "items": [...]}`。每个 item 是 `predictions.jsonl` 中的原始记录，另加 `metrics`（该样本的逐样本指标）：
+
+```json
+{"id": "0001", "image": "images/0001.png", "ref_image": "/data/gt/0001.png",
+ "text": "识别结果", "ref_text": "真实文本",
+ "metrics": {"psnr": 27.9, "ssim": 0.86, "ocr_a": 0.0, "cer": 0.25, "ned": 0.75}}
+```
+
+### GET /api/results/{id}/file?path=images/0001.png
+
+读取结果集里的文件（主要是图片），直接返回文件内容和对应的 Content-Type，可以作为 `<img src>` 使用。`path` 可以是相对结果集目录的路径，也可以是服务器上的绝对路径（如参考图）。
+
+### POST /api/evaluations
+
+```json
+{"result_set_id": 7, "metrics": ["psnr", "ssim", "ocr_a", "cer", "ned"], "reference": null, "num_devices": 0, "priority": 0, "submitter": "alice"}
+```
+
+`reference` 可选，是参考值 jsonl 在服务器上的路径。`num_devices` 默认 0；LPIPS 可以给 1 张卡加速。返回 `EvaluationOut`：
+
+```json
+{
+  "id": 12, "result_set_id": 7, "result_set_name": "model-a",
+  "metrics": ["psnr", "ssim", "ocr_a", "cer", "ned"], "reference": null,
+  "job_id": 88, "job_status": "succeeded",
+  "status": "succeeded",
+  "values": {"psnr": 28.41, "ssim": 0.873, "ocr_a": 0.92, "cer": 0.031, "ned": 0.975},
+  "counts": {"psnr": 1000, "ssim": 1000, "ocr_a": 1000, "cer": 1000, "ned": 1000},
+  "errors": null, "num_skipped": 0, "error": null,
+  "created_at": "...", "finished_at": "..."
+}
+```
+
+`status`：`pending`（任务排队中）/ `running` / `succeeded` / `failed`（原因见 `error`，详细输出看 `job_id` 对应任务的日志）。评测成功但个别指标算不出来（如服务器没装 lpips、缺少 `ref_text` 字段）时，该指标在 `values` 中为 `null`，原因在 `errors` 中。
+
+`GET /api/evaluations?result_set_id=7` 列出某个结果集的评测历史，`GET /api/evaluations/{id}` 返回单个。
+
+### GET /api/compare/metrics?ids=7&ids=8&ids=9
+
+多组结果的指标对比：
+
+```json
+{
+  "result_sets": [{"id": 7, "name": "model-a", "server_name": "gpu-03", "meta": {}}, {"id": 8, "name": "model-b", "server_name": "npu-01", "meta": {}}],
+  "metrics": [EvaluatorOut, ...],
+  "values": {"7": {"psnr": 28.41, "cer": 0.031}, "8": {"psnr": 26.02, "cer": 0.054}}
+}
+```
+
+`metrics` 只包含至少一个结果集有值的指标，顺序固定；某个结果集缺少某指标时 `values` 里没有该键。
+
+### GET /api/compare/samples?ids=7&ids=8&sort_metric=psnr&sort=spread&offset=0&limit=20
+
+按样本 `id` 对齐，并排展示多组结果的同一样本，样本顺序以第一个结果集为准：
+
+```json
+{
+  "total": 1000, "offset": 0,
+  "items": [
+    {"id": "0042", "spread": 6.3,
+     "results": {"7": {"id": "0042", "image": "images/0042.png", "text": "...", "metrics": {"psnr": 30.1}},
+                 "8": {"id": "0042", "image": "images/0042.png", "text": "...", "metrics": {"psnr": 23.8}}}}
+  ]
+}
+```
+
+- `sort_metric` 不填时按原顺序；填了且 `sort=spread`（默认）时，按该指标在各结果集之间的差值从大到小排列，方便找出差别最大的样本；`sort=asc`/`desc` 按第一个结果集的值排序。
+- 某结果集没有该样本时，对应值为 `null`。
+- 图片用 `/api/results/{结果集 ID}/file?path=<image 字段>` 读取。
+- 单个结果集超过 50000 个样本时返回 422。
 
 ## 刷新频率
 

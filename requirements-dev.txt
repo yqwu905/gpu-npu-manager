@@ -1,2 +1,6 @@
 -r server/requirements.txt
 pytest>=8
+# 评测脚本测试
+numpy
+pillow
+scikit-image

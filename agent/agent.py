@@ -9,12 +9,16 @@
 - GET  /v1/jobs/{id}           任务状态（running / exited）与退出码
 - POST /v1/jobs/{id}/kill      终止任务的整个进程组
 - GET  /v1/jobs/{id}/log       按字节偏移量读取任务日志
+- GET  /v1/files/list?path=    列出白名单目录内的文件
+- GET  /v1/files/raw?path=     读取文件原始内容（图片、json 等）
+- GET  /v1/files/jsonl?path=   分页读取 jsonl 文件
 
 所有请求需带请求头 X-Agent-Token，与启动参数 --token（或环境变量 GNM_AGENT_TOKEN）一致。
 """
 import argparse
 import json
 import logging
+import mimetypes
 import os
 import pwd
 import re
@@ -636,6 +640,101 @@ class JobManager(object):
 
 
 # ---------------------------------------------------------------------------
+# 结果文件读取
+# ---------------------------------------------------------------------------
+
+MAX_RAW_BYTES = 64 * 1024 * 1024
+MAX_JSONL_PAGE = 5000
+
+
+class FileStore(object):
+    """只允许读取白名单目录（--allow-root）下的文件，供结果浏览和评测结果回读。"""
+
+    def __init__(self, roots):
+        self.roots = [os.path.realpath(os.path.expanduser(r)) for r in roots]
+        self._index_cache = {}
+        self._lock = threading.Lock()
+
+    def resolve(self, path):
+        if not path:
+            raise JobError(400, "缺少 path 参数")
+        real = os.path.realpath(os.path.expanduser(path))
+        for root in self.roots:
+            if real == root or real.startswith(root.rstrip(os.sep) + os.sep):
+                return real
+        raise JobError(403, "路径不在允许访问的目录内: {}".format(path))
+
+    def list_dir(self, path):
+        real = self.resolve(path)
+        if not os.path.isdir(real):
+            raise JobError(404, "目录不存在")
+        entries = []
+        for name in sorted(os.listdir(real)):
+            full = os.path.join(real, name)
+            try:
+                st = os.stat(full)
+            except OSError:
+                continue
+            entries.append(
+                {
+                    "name": name,
+                    "type": "dir" if os.path.isdir(full) else "file",
+                    "size": st.st_size,
+                    "mtime": st.st_mtime,
+                }
+            )
+        return {"path": real, "entries": entries}
+
+    def read_raw(self, path):
+        real = self.resolve(path)
+        if not os.path.isfile(real):
+            raise JobError(404, "文件不存在")
+        if os.path.getsize(real) > MAX_RAW_BYTES:
+            raise JobError(413, "文件过大")
+        with open(real, "rb") as f:
+            data = f.read()
+        content_type = mimetypes.guess_type(real)[0] or "application/octet-stream"
+        return data, content_type
+
+    def _line_index(self, real):
+        """返回每个非空行的起始字节位置；按 (大小, 修改时间) 缓存。"""
+        st = os.stat(real)
+        key = (st.st_size, st.st_mtime)
+        with self._lock:
+            cached = self._index_cache.get(real)
+            if cached and cached[0] == key:
+                return cached[1]
+        offsets = []
+        pos = 0
+        with open(real, "rb") as f:
+            for line in f:
+                if line.strip():
+                    offsets.append(pos)
+                pos += len(line)
+        with self._lock:
+            self._index_cache[real] = (key, offsets)
+        return offsets
+
+    def read_jsonl(self, path, offset, limit):
+        real = self.resolve(path)
+        if not os.path.isfile(real):
+            raise JobError(404, "文件不存在")
+        offsets = self._line_index(real)
+        offset = max(0, offset)
+        limit = max(0, min(limit, MAX_JSONL_PAGE))
+        items = []
+        with open(real, "rb") as f:
+            for number, start in enumerate(offsets[offset : offset + limit], start=offset + 1):
+                f.seek(start)
+                line = f.readline().decode("utf-8", errors="replace")
+                try:
+                    items.append(json.loads(line))
+                except ValueError as exc:
+                    items.append({"_error": "第 {} 条记录不是合法 JSON: {}".format(number, exc)})
+        return {"total": len(offsets), "offset": offset, "items": items}
+
+
+# ---------------------------------------------------------------------------
 # HTTP 服务
 # ---------------------------------------------------------------------------
 
@@ -644,7 +743,7 @@ class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
 
 
-def make_handler(collector, jobs, token):
+def make_handler(collector, jobs, files, token):
     class Handler(BaseHTTPRequestHandler):
         server_version = "gnm-agent/" + AGENT_VERSION
 
@@ -658,6 +757,13 @@ def make_handler(collector, jobs, token):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        def _send_bytes(self, data, content_type):
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
 
         def _authorized(self):
             if token and self.headers.get("X-Agent-Token") != token:
@@ -697,6 +803,15 @@ def make_handler(collector, jobs, token):
                     offset = int(query.get("offset", ["0"])[0])
                     limit = int(query.get("limit", [str(64 * 1024)])[0])
                     self._send(200, jobs.read_log(parts[2], offset, limit))
+                elif method == "GET" and parts == ["v1", "files", "list"]:
+                    self._send(200, files.list_dir(query.get("path", [""])[0]))
+                elif method == "GET" and parts == ["v1", "files", "raw"]:
+                    data, content_type = files.read_raw(query.get("path", [""])[0])
+                    self._send_bytes(data, content_type)
+                elif method == "GET" and parts == ["v1", "files", "jsonl"]:
+                    offset = int(query.get("offset", ["0"])[0])
+                    limit = int(query.get("limit", ["100"])[0])
+                    self._send(200, files.read_jsonl(query.get("path", [""])[0], offset, limit))
                 else:
                     self._send(404, {"error": "not found"})
             except JobError as exc:
@@ -713,10 +828,11 @@ def make_handler(collector, jobs, token):
     return Handler
 
 
-def build_server(host, port, token, disk_paths, data_dir):
+def build_server(host, port, token, disk_paths, data_dir, allow_roots=None):
     collector = Collector(disk_paths)
     jobs = JobManager(data_dir, collector.accelerator)
-    return ThreadingHTTPServer((host, port), make_handler(collector, jobs, token))
+    files = FileStore(allow_roots or [os.path.expanduser("~")])
+    return ThreadingHTTPServer((host, port), make_handler(collector, jobs, files, token))
 
 
 def main():
@@ -735,6 +851,13 @@ def main():
         default=os.environ.get("GNM_AGENT_DATA_DIR", os.path.expanduser("~/.gnm-agent")),
         help="任务记录和日志的存放目录，默认 ~/.gnm-agent",
     )
+    parser.add_argument(
+        "--allow-root",
+        action="append",
+        default=None,
+        help="允许中心服务读取的目录（推理结果所在位置），可重复，默认运行用户的家目录；"
+        "也可用环境变量 GNM_AGENT_ALLOW_ROOTS 设置，多个用冒号分隔",
+    )
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
 
@@ -744,7 +867,10 @@ def main():
     )
     if not args.token:
         log.warning("未设置 token，任何人都可以访问本 Agent")
-    server = build_server(args.host, args.port, args.token, args.disk or ["/"], args.data_dir)
+    allow_roots = args.allow_root
+    if not allow_roots and os.environ.get("GNM_AGENT_ALLOW_ROOTS"):
+        allow_roots = [r for r in os.environ["GNM_AGENT_ALLOW_ROOTS"].split(os.pathsep) if r]
+    server = build_server(args.host, args.port, args.token, args.disk or ["/"], args.data_dir, allow_roots)
     log.info("gnm-agent %s 监听 %s:%s", AGENT_VERSION, args.host, args.port)
     server.serve_forever()
 
