@@ -31,7 +31,7 @@ web/src/pages/     五个页面
 | --- | --- | --- |
 | 总览 | `GET /api/overview`、`GET /api/servers`、`GET /api/jobs`、`GET /api/evaluations`、`GET /api/evaluators` | 已对接 |
 | 服务器 | `GET /api/servers`（全部筛选参数）、`/servers/grouped`、`/servers/filters`、`GET/PATCH/DELETE /servers/{id}`、`POST /servers`、`POST /servers/{id}/refresh`、`GET /servers/{id}/history` | 已对接 |
-| 任务 | `GET/POST /api/jobs`、`GET/PATCH /jobs/{id}`、`POST /jobs/{id}/cancel?force=`、`POST /jobs/{id}/requeue`、`GET /jobs/{id}/log?offset=` | 已对接 |
+| 任务 | `GET/POST /api/jobs`、`GET/PATCH /jobs/{id}`、`POST /jobs/{id}/cancel?force=`、`POST /jobs/{id}/requeue`、`GET /jobs/{id}/log?offset=`、`GET/PATCH /api/scheduler` | 已对接 |
 | 结果与评测 | `GET/POST /api/results`、`GET /results/{id}/samples`、`GET /results/{id}/file`、`GET /api/evaluators`、`GET/POST /api/evaluations` | 已对接 |
 | 对比 | `GET /api/compare/metrics`、`GET /api/compare/samples` | 已对接 |
 
@@ -40,7 +40,7 @@ web/src/pages/     五个页面
 `api/client.ts` 的 `withFallback` 在接口返回 FastAPI 默认的 404（`{"detail": "Not Found"}`，即路由未注册）时，把该功能切换到 `web/src/mock` 下的模拟数据，页面上显示“示例数据 · xx接口未上线”标记。分三组独立判断：
 
 - `jobs`：任务接口。
-- `scheduler`：调度模式接口（见缺口 1）。
+- `scheduler`：调度模式接口。
 - `results`：结果、评测、对比接口。
 
 业务上的 404（例如“服务器不存在”）的 detail 不是 `Not Found`，不会触发兜底。
@@ -49,28 +49,13 @@ web/src/pages/     五个页面
 
 `lib/format.ts` 的 `deviceState()` 把每张卡归为：空闲、平台任务占用（`devices[].job_id` 非空）、外部占用、异常（health 不是 OK）、离线（服务器不在线）。`job_id` 字段来自第 2 步；更早版本的接口没有这个字段时，非空闲卡统一显示为“占用”。
 
-## 接口缺口
+## 对接说明
 
-### 1. 调度模式查询与切换（第 2 步）
+### 调度模式与排队原因
 
-目前只能用环境变量 `GNM_SCHEDULE_STRICT` 配置严格按序调度。任务页原型里有“严格按序”开关，侧栏也显示当前模式。建议增加：
-
-```
-GET   /api/scheduler           -> {"strict_order": false}
-PATCH /api/scheduler  {"strict_order": true} -> {"strict_order": true}
-```
-
-运行期修改可以只存内存，重启后回到环境变量的值。接口缺失时前端隐藏开关，显示“调度模式由服务端配置”。
-
-### 2. 排队原因（第 2 步）
-
-任务详情和总览的排队列表需要显示任务为什么还在等，例如“组 ocr 空闲 1 张，需要 2 张”“前面有更高优先级任务”。建议在 `JobOut` 上增加可选字段：
-
-```
-wait_reason: str | None   # 仅 status=queued 时有值，由调度器在每轮扫描后写入
-```
-
-缺失时前端只显示队列位置。
+- 任务页的“严格按序”开关对接 `GET/PATCH /api/scheduler`，侧栏显示当前模式。切换只保存在中心服务内存中，重启后回到 `GNM_SCHEDULE_STRICT` 的值。
+- 任务详情和总览的排队列表显示 `JobOut.wait_reason`（为空时只显示队列位置）。
+- 后端没有 `/api/scheduler` 时，前端隐藏开关，显示“调度模式由服务端配置”。
 
 ### 结果与评测的对接方式
 

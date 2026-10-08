@@ -160,7 +160,7 @@ export interface Job {
   created_at: string
   started_at: string | null
   finished_at: string | null
-  /** 提案：排队中的任务为什么还没被调度（后端暂未提供） */
+  /** 排队中的任务为什么还没被调度，由每轮调度更新 */
   wait_reason?: string | null
 }
 
@@ -199,7 +199,7 @@ export interface JobLog {
   data: string
 }
 
-/** 提案：调度模式查询与切换（后端目前只能用环境变量 GNM_SCHEDULE_STRICT 配置） */
+/** 调度模式，切换只保存在中心服务内存中，重启后恢复为 GNM_SCHEDULE_STRICT 的值 */
 export interface SchedulerSettings {
   strict_order: boolean
 }
