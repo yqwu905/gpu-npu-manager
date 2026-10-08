@@ -1,5 +1,6 @@
 import os
 from dataclasses import dataclass, field
+from pathlib import Path
 
 
 def _env_int(name, default):
@@ -12,6 +13,10 @@ class Settings:
 
     database_url: str = field(
         default_factory=lambda: os.environ.get("GNM_DATABASE_URL", "sqlite:///./data/gnm.db")
+    )
+    # 前端构建产物目录（cd web && npm run build 生成），不存在时只提供接口
+    web_dir: str = field(
+        default_factory=lambda: os.environ.get("GNM_WEB_DIR", str(Path(__file__).resolve().parents[2] / "web" / "dist"))
     )
     # 与各节点 Agent 共享的访问令牌
     agent_token: str = field(default_factory=lambda: os.environ.get("GNM_AGENT_TOKEN", ""))

@@ -8,6 +8,7 @@ from .db import Base, make_engine, make_session_factory
 from .poller import Poller
 from .routers import jobs, overview, servers
 from .scheduler import Scheduler
+from .web import mount_web
 
 
 def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTransport | None = None) -> FastAPI:
@@ -33,6 +34,7 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
         description="管理昇腾 NPU 与英伟达 GPU 服务器：状态查看、任务调度、推理结果评测。",
         lifespan=lifespan,
     )
+    mount_web(app, settings.web_dir)
     app.state.settings = settings
     app.state.session_factory = session_factory
     app.state.poller = poller

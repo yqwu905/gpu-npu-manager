@@ -11,14 +11,15 @@
 | 1. 服务器与卡状态（Agent 采集、属性管理、分组筛选） | 已完成 |
 | 2. 任务调度（排队、分配卡、取消、重排、日志） | 已完成 |
 | 3. 推理结果与评测 | 未开始 |
-| 4. 前端对接 | 未开始 |
+| 4. 前端对接 | 进行中（页面已完成，结果与评测按 PR #3 对接，合并前显示示例数据） |
 
 ## 目录
 
 ```
 agent/          节点 Agent（单文件，仅依赖 Python 3.7+ 标准库）
 server/app/     中心服务（FastAPI + SQLAlchemy）
-docs/           接口说明 api.md 与 openapi.json
+web/            前端（Vite + React），说明见 docs/frontend.md
+docs/           接口说明 api.md、openapi.json 与前端说明 frontend.md
 tests/          测试与 smi 输出样例
 scripts/        辅助脚本
 ```
@@ -43,7 +44,13 @@ cd server
 GNM_AGENT_TOKEN=<token> uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000
 ```
 
-打开 `http://<地址>:8000/docs` 可在线调试接口。常用环境变量：
+先构建前端（需要 Node 18+，构建产物可以拷到没有 Node 的机器上）：
+
+```sh
+cd web && npm ci && npm run build
+```
+
+打开 `http://<地址>:8000/` 进入管理页面，`http://<地址>:8000/docs` 可在线调试接口。常用环境变量：
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -56,6 +63,7 @@ GNM_AGENT_TOKEN=<token> uvicorn app.main:create_app --factory --host 0.0.0.0 --p
 | `GNM_IDLE_MEMORY_MB_NPU` | `6144` | NPU 空闲判定的 HBM 阈值（MB），空载时也有 3~4 GB 占用 |
 | `GNM_SCHEDULE_INTERVAL` | `5` | 调度器扫描队列的间隔（秒） |
 | `GNM_SCHEDULE_STRICT` | `0` | 设为 `1` 时严格按队列顺序调度，前面的任务放不下时后面的也不调度 |
+| `GNM_WEB_DIR` | `web/dist` | 前端构建产物目录，不存在时只提供接口 |
 
 ## 开发
 
