@@ -26,7 +26,13 @@ class Settings:
     # 空闲卡判定：无进程且已用显存低于阈值（MB）。昇腾卡空载时 HBM 也有 3~4 GB 占用。
     idle_memory_mb_gpu: int = field(default_factory=lambda: _env_int("GNM_IDLE_MEMORY_MB_GPU", 1024))
     idle_memory_mb_npu: int = field(default_factory=lambda: _env_int("GNM_IDLE_MEMORY_MB_NPU", 6144))
-    # 是否启动后台轮询（测试时关闭）
+    # 调度器扫描队列的间隔（秒）
+    schedule_interval: int = field(default_factory=lambda: _env_int("GNM_SCHEDULE_INTERVAL", 5))
+    # 严格按顺序调度：排在前面的任务放不下时，后面的任务也不调度（默认允许回填）
+    schedule_strict: bool = field(
+        default_factory=lambda: os.environ.get("GNM_SCHEDULE_STRICT", "0") in ("1", "true", "True")
+    )
+    # 是否启动后台轮询和调度（测试时关闭）
     enable_poller: bool = field(
         default_factory=lambda: os.environ.get("GNM_ENABLE_POLLER", "1") not in ("0", "false", "False")
     )

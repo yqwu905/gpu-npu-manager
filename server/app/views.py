@@ -1,12 +1,31 @@
 """把 ORM 对象转换成接口返回结构，并计算空闲卡等派生字段。"""
 
+from sqlalchemy import select
+
 from .config import Settings
-from .models import Device, Server
+from .models import JOB_ACTIVE_STATUSES, Device, Job, Server
 from .schemas import DeviceOut, ServerOut
 from .timeutil import as_utc
 
 
-def device_is_idle(server: Server, device: Device, settings: Settings) -> bool:
+Occupied = dict[tuple[int, int], int]
+
+
+def occupied_devices(session) -> Occupied:
+    """平台任务正在占用的卡：(服务器 ID, 卡号) -> 任务 ID。"""
+    occupied: Occupied = {}
+    rows = session.execute(
+        select(Job.id, Job.assigned_server_id, Job.device_indices).where(Job.status.in_(JOB_ACTIVE_STATUSES))
+    )
+    for job_id, server_id, indices in rows:
+        for index in indices or []:
+            occupied[(server_id, index)] = job_id
+    return occupied
+
+
+def device_is_idle(server: Server, device: Device, settings: Settings, occupied: Occupied | None = None) -> bool:
+    if occupied and (server.id, device.index) in occupied:
+        return False
     if server.status != "online":
         return False
     if device.health and device.health.upper() != "OK":
@@ -19,15 +38,18 @@ def device_is_idle(server: Server, device: Device, settings: Settings) -> bool:
     return True
 
 
-def device_out(server: Server, device: Device, settings: Settings) -> DeviceOut:
+def device_out(server: Server, device: Device, settings: Settings, occupied: Occupied | None = None) -> DeviceOut:
     out = DeviceOut.model_validate(device)
-    out.idle = device_is_idle(server, device, settings)
+    out.idle = device_is_idle(server, device, settings, occupied)
+    out.job_id = (occupied or {}).get((server.id, device.index))
     out.updated_at = as_utc(device.updated_at)
     return out
 
 
-def server_out(server: Server, settings: Settings, include_devices: bool = True) -> ServerOut:
-    devices = [device_out(server, d, settings) for d in server.devices]
+def server_out(
+    server: Server, settings: Settings, include_devices: bool = True, occupied: Occupied | None = None
+) -> ServerOut:
+    devices = [device_out(server, d, settings, occupied) for d in server.devices]
     models = sorted({d.model for d in server.devices if d.model})
     return ServerOut(
         id=server.id,
