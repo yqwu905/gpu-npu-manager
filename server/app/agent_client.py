@@ -45,6 +45,9 @@ class AgentClient:
     async def _request(self, method: str, host: str, port: int, path: str, **kwargs) -> dict:
         return (await self._send(method, host, port, path, **kwargs)).json()
 
+    async def health(self, host, port) -> dict:
+        return await self._request("GET", host, port, "/v1/health")
+
     async def start_job(self, host, port, job_id, command, workdir, env, devices) -> dict:
         body = {
             "job_id": agent_job_id(job_id),

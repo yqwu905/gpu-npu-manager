@@ -30,7 +30,7 @@ web/src/pages/     五个页面
 | 页面 | 使用的接口 | 状态 |
 | --- | --- | --- |
 | 总览 | `GET /api/overview`、`GET /api/servers`、`GET /api/jobs`、`GET /api/evaluations`、`GET /api/evaluators` | 已对接 |
-| 服务器 | `GET /api/servers`（全部筛选参数）、`/servers/grouped`、`/servers/filters`、`GET/PATCH/DELETE /servers/{id}`、`POST /servers`、`POST /servers/{id}/refresh`、`GET /servers/{id}/history` | 已对接 |
+| 服务器 | `GET /api/servers`（全部筛选参数）、`/servers/grouped`、`/servers/filters`、`GET/PATCH/DELETE /servers/{id}`、`POST /servers`、`POST /servers/{id}/refresh`、`GET /servers/{id}/history`、`POST /servers/batch`、`GET /agent-package`、`POST /servers/{id}/deploy`、`POST /servers/deploy`、`GET /servers/{id}/deploy` | 已对接 |
 | 任务 | `GET/POST /api/jobs`、`GET/PATCH /jobs/{id}`、`POST /jobs/{id}/cancel?force=`、`POST /jobs/{id}/requeue`、`GET /jobs/{id}/log?offset=`、`GET/PATCH /api/scheduler` | 已对接 |
 | 结果与评测 | `GET/POST /api/results`、`GET /results/{id}/samples`、`GET /results/{id}/file`、`GET /api/evaluators`、`GET/POST /api/evaluations` | 已对接 |
 | 对比 | `GET /api/compare/metrics`、`GET /api/compare/samples` | 已对接 |

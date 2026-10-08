@@ -1,5 +1,5 @@
 import { request } from './client'
-import type { DeviceHistory, FilterOptions, GroupBy, Overview, Server, ServerCreate, ServerGroup, ServerQuery, ServerUpdate } from './types'
+import type { AgentPackage, DeployDetail, DeviceHistory, FilterOptions, GroupBy, Overview, Server, ServerBatchResult, ServerCreate, ServerGroup, ServerQuery, ServerUpdate, SshConfigHosts } from './types'
 
 export const serversApi = {
   overview: () => request<Overview>('GET', '/overview'),
@@ -12,4 +12,10 @@ export const serversApi = {
   update: (id: number, body: ServerUpdate) => request<Server>('PATCH', `/servers/${id}`, { body }),
   remove: (id: number) => request<void>('DELETE', `/servers/${id}`),
   refresh: (id: number) => request<Server>('POST', `/servers/${id}/refresh`),
+  batchCreate: (servers: ServerCreate[], deploy: boolean) => request<ServerBatchResult>('POST', '/servers/batch', { body: { servers, deploy } }),
+  sshConfig: () => request<SshConfigHosts>('GET', '/ssh-config'),
+  agentPackage: () => request<AgentPackage>('GET', '/agent-package'),
+  deploy: (id: number) => request<Server>('POST', `/servers/${id}/deploy`),
+  deployOutdated: () => request<Server[]>('POST', '/servers/deploy', { body: { outdated: true } }),
+  deployDetail: (id: number) => request<DeployDetail | null>('GET', `/servers/${id}/deploy`),
 }

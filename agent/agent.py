@@ -16,6 +16,7 @@
 所有请求需带请求头 X-Agent-Token，与启动参数 --token（或环境变量 GNM_AGENT_TOKEN）一致。
 """
 import argparse
+import hashlib
 import json
 import logging
 import mimetypes
@@ -33,6 +34,8 @@ from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs, urlparse
 
 AGENT_VERSION = "0.1.0"
+# Agent 所在目录，evaluate.py 与它放在一起
+AGENT_DIR = os.path.dirname(os.path.abspath(__file__))
 SMI_TIMEOUT = 15
 
 NVIDIA_GPU_FIELDS = [
@@ -50,6 +53,22 @@ NVIDIA_GPU_FIELDS = [
 NVIDIA_APP_FIELDS = ["gpu_uuid", "pid", "process_name", "used_memory"]
 
 log = logging.getLogger("gnm-agent")
+
+
+def build_version(directory=AGENT_DIR):
+    """版本号带上 agent.py 和 evaluate.py 的内容摘要，中心服务据此判断是否需要升级。"""
+    digest = hashlib.sha256()
+    for name in ("agent.py", "evaluate.py"):
+        try:
+            with open(os.path.join(directory, name), "rb") as f:
+                digest.update(f.read())
+        except OSError:
+            pass
+        digest.update(b"\0")
+    return "{}+{}".format(AGENT_VERSION, digest.hexdigest()[:10])
+
+
+VERSION = build_version()
 
 
 # ---------------------------------------------------------------------------
@@ -411,7 +430,7 @@ class Collector(object):
         except OSError:
             load1 = None
         return {
-            "agent_version": AGENT_VERSION,
+            "agent_version": VERSION,
             "hostname": socket.gethostname(),
             "time": time.time(),
             "accelerator": accelerator,
@@ -555,6 +574,7 @@ class JobManager(object):
                 # 不分配卡时设为空字符串，进程看不到任何 GPU
                 env["CUDA_VISIBLE_DEVICES"] = visible
             env["GNM_JOB_ID"] = job_id
+            env["GNM_AGENT_DIR"] = AGENT_DIR
 
             log_path = self._path(job_id, ".log")
             exit_path = self._path(job_id, ".exit")
@@ -788,7 +808,7 @@ def make_handler(collector, jobs, files, token):
             query = parse_qs(url.query)
             try:
                 if method == "GET" and parts == ["v1", "health"]:
-                    self._send(200, {"ok": True, "agent_version": AGENT_VERSION})
+                    self._send(200, {"ok": True, "agent_version": VERSION})
                 elif method == "GET" and parts == ["v1", "status"]:
                     self._send(200, collector.status())
                 elif method == "GET" and parts == ["v1", "jobs"]:
@@ -871,7 +891,7 @@ def main():
     if not allow_roots and os.environ.get("GNM_AGENT_ALLOW_ROOTS"):
         allow_roots = [r for r in os.environ["GNM_AGENT_ALLOW_ROOTS"].split(os.pathsep) if r]
     server = build_server(args.host, args.port, args.token, args.disk or ["/"], args.data_dir, allow_roots)
-    log.info("gnm-agent %s 监听 %s:%s", AGENT_VERSION, args.host, args.port)
+    log.info("gnm-agent %s 监听 %s:%s", VERSION, args.host, args.port)
     server.serve_forever()
 
 

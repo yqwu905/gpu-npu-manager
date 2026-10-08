@@ -41,8 +41,6 @@ def predictions_path(result: ResultSet) -> str:
 
 def build_command(settings: Settings, result: ResultSet, evaluation: Evaluation, device: str) -> str:
     parts = [
-        settings.eval_python,
-        settings.eval_script,
         "--predictions", predictions_path(result),
         "--output", evaluation.output_dir,
         "--metrics", ",".join(evaluation.metrics),
@@ -50,7 +48,9 @@ def build_command(settings: Settings, result: ResultSet, evaluation: Evaluation,
     ]
     if evaluation.reference:
         parts += ["--reference", evaluation.reference]
-    return " ".join(shlex.quote(p) for p in parts)
+    # Agent 启动任务时设置 GNM_AGENT_DIR，evaluate.py 与 agent.py 安装在同一目录
+    script = shlex.quote(settings.eval_script) if settings.eval_script else '"$GNM_AGENT_DIR/evaluate.py"'
+    return " ".join([shlex.quote(settings.eval_python), script] + [shlex.quote(p) for p in parts])
 
 
 def latest_metric_sources(result: ResultSet) -> dict[str, Evaluation]:

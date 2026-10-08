@@ -23,6 +23,21 @@ class Server(Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     schedulable: Mapped[bool] = mapped_column(Boolean, default=True)
 
+    # SSH 登录信息，填写后由中心服务安装和升级 Agent；任务以该用户运行
+    ssh_user: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # SSH 连接目标，可以是中心主机 ~/.ssh/config 中的别名（沿用其中的密钥、跳板机等设置），为空时用 host
+    ssh_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    ssh_port: Mapped[int | None] = mapped_column(Integer, nullable=True, default=22)
+    allow_roots: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)
+    # 最近一次部署：pending / running / succeeded / failed
+    deploy_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    deploy_action: Mapped[str | None] = mapped_column(String(16), nullable=True)  # install / upgrade
+    deploy_version: Mapped[str | None] = mapped_column(String(32), nullable=True)  # 部署的目标版本
+    deploy_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    deploy_log: Mapped[str | None] = mapped_column(Text, nullable=True)
+    deploy_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deploy_finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # 以下字段由轮询维护
     accelerator: Mapped[str | None] = mapped_column(String(16), nullable=True)  # gpu / npu
     status: Mapped[str] = mapped_column(String(16), default="unknown")  # unknown / online / offline

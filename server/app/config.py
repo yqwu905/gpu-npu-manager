@@ -37,10 +37,19 @@ class Settings:
     schedule_strict: bool = field(
         default_factory=lambda: os.environ.get("GNM_SCHEDULE_STRICT", "0") in ("1", "true", "True")
     )
-    # 评测脚本在各服务器上的解释器和路径（install.sh 会把 evaluate.py 装到 /opt/gnm-agent）
+    # 评测脚本在各服务器上的解释器和路径，路径为空时用 Agent 所在目录下的 evaluate.py
     eval_python: str = field(default_factory=lambda: os.environ.get("GNM_EVAL_PYTHON", "python3"))
-    eval_script: str = field(
-        default_factory=lambda: os.environ.get("GNM_EVAL_SCRIPT", "/opt/gnm-agent/evaluate.py")
+    eval_script: str = field(default_factory=lambda: os.environ.get("GNM_EVAL_SCRIPT", ""))
+    # 通过 SSH 安装和升级 Agent：安装包目录（agent.py、evaluate.py 所在目录）与 ssh 命令
+    agent_package_dir: str = field(
+        default_factory=lambda: os.environ.get("GNM_AGENT_PACKAGE_DIR", str(Path(__file__).resolve().parents[2] / "agent"))
+    )
+    ssh_command: str = field(default_factory=lambda: os.environ.get("GNM_SSH_COMMAND", "ssh"))
+    deploy_timeout: int = field(default_factory=lambda: _env_int("GNM_DEPLOY_TIMEOUT", 180))
+    deploy_concurrency: int = field(default_factory=lambda: _env_int("GNM_DEPLOY_CONCURRENCY", 4))
+    # 中心服务升级后，自动把 Agent 版本落后的服务器升级到当前版本
+    auto_upgrade: bool = field(
+        default_factory=lambda: os.environ.get("GNM_AUTO_UPGRADE", "1") not in ("0", "false", "False")
     )
     # 是否启动后台轮询和调度（测试时关闭）
     enable_poller: bool = field(
