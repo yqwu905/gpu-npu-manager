@@ -10,16 +10,23 @@ from ..config import Settings
 from ..deps import get_session, get_settings
 from ..models import JOB_ACTIVE_STATUSES, DeviceMetric, Job, Server
 from ..schemas import (
+    AgentPackage,
+    BatchError,
+    DeployDetail,
+    DeployRequest,
     DeviceHistory,
     FilterOptions,
     MetricPoint,
+    ServerBatchCreate,
+    ServerBatchResult,
     ServerCreate,
     ServerGroup,
     ServerOut,
     ServerUpdate,
 )
 from ..timeutil import as_utc
-from ..views import occupied_devices, server_out
+from ..deployer import public_key
+from ..views import deploy_state, occupied_devices, server_out
 
 router = APIRouter(prefix="/api", tags=["servers"])
 
@@ -161,22 +168,120 @@ def filter_options(session: Session = Depends(get_session)):
     )
 
 
+def _new_server(body: ServerCreate) -> Server:
+    data = body.model_dump()
+    data["name"] = (body.name or body.host).strip()
+    data["ssh_user"] = (body.ssh_user or "").strip() or None
+    server = Server(**data)
+    server.devices = []
+    return server
+
+
+# 会创建后台部署任务，必须在事件循环中调用，所以调用它的接口都定义为 async
+def _after_create(request: Request, background: BackgroundTasks, servers: list[Server], deploy: bool) -> None:
+    to_deploy = [s.id for s in servers if deploy and s.ssh_user]
+    if to_deploy:
+        request.app.state.deployer.submit(to_deploy)
+    # 已经装好 Agent 的服务器直接拉取一次状态
+    to_poll = [s.id for s in servers if s.id not in to_deploy]
+    poller = getattr(request.app.state, "poller", None)
+    if poller is not None and to_poll:
+        background.add_task(poller.poll, to_poll)
+
+
 @router.post("/servers", response_model=ServerOut, status_code=201, summary="添加服务器")
-def create_server(
+async def create_server(
     body: ServerCreate,
+    request: Request,
+    background: BackgroundTasks,
+    deploy: bool = Query(True, description="填写了 ssh_user 时，添加后立即通过 SSH 安装 Agent"),
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+):
+    server = _new_server(body)
+    session.add(server)
+    _commit(session)
+    _after_create(request, background, [server], deploy)
+    session.refresh(server)
+    return server_out(server, settings)
+
+
+@router.post("/servers/batch", response_model=ServerBatchResult, status_code=201, summary="批量添加服务器")
+async def batch_create_servers(
+    body: ServerBatchCreate,
     request: Request,
     background: BackgroundTasks,
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ):
-    server = Server(**body.model_dump())
-    server.devices = []
-    session.add(server)
-    _commit(session)
-    poller = getattr(request.app.state, "poller", None)
-    if poller is not None:
-        background.add_task(poller.poll, [server.id])
-    return server_out(server, settings)
+    existing = set(session.scalars(select(Server.name)))
+    created, errors = [], []
+    for index, item in enumerate(body.servers):
+        server = _new_server(item)
+        if server.name in existing:
+            errors.append(BatchError(index=index, host=item.host, error=f"名称 {server.name} 已存在"))
+            continue
+        existing.add(server.name)
+        session.add(server)
+        created.append(server)
+    session.commit()
+    _after_create(request, background, created, body.deploy)
+    for server in created:
+        session.refresh(server)
+    return ServerBatchResult(created=[server_out(s, settings) for s in created], errors=errors)
+
+
+@router.get("/agent-package", response_model=AgentPackage, summary="Agent 安装包版本与 SSH 公钥")
+def agent_package(request: Request, settings: Settings = Depends(get_settings)):
+    deployer = request.app.state.deployer
+    key_path, key = public_key()
+    return AgentPackage(
+        version=deployer.version,
+        ssh_available=deployer.ssh_available(),
+        public_key=key,
+        public_key_path=key_path,
+        auto_upgrade=settings.auto_upgrade,
+    )
+
+
+@router.post("/servers/deploy", response_model=list[ServerOut], summary="批量安装或升级 Agent")
+async def deploy_servers(
+    body: DeployRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+):
+    if body.server_ids is not None:
+        ids = body.server_ids
+    elif body.outdated:
+        outs = [server_out(s, settings, include_devices=False) for s in _load_servers(session)]
+        ids = [o.id for o in outs if o.managed and (o.agent_outdated or o.agent_version is None)]
+    else:
+        raise HTTPException(422, "请指定 server_ids 或 outdated=true")
+    accepted = request.app.state.deployer.submit(ids)
+    session.expire_all()
+    return [server_out(_get_server(session, i), settings) for i in accepted]
+
+
+@router.post("/servers/{server_id}/deploy", response_model=ServerOut, summary="安装或升级该服务器的 Agent")
+async def deploy_server(
+    server_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+):
+    server = _get_server(session, server_id)
+    if not server.ssh_user:
+        raise HTTPException(409, "没有填写 SSH 用户，无法自动安装")
+    if not request.app.state.deployer.submit([server_id]):
+        raise HTTPException(409, "正在安装中")
+    session.refresh(server)
+    return server_out(server, settings, occupied=occupied_devices(session))
+
+
+@router.get("/servers/{server_id}/deploy", response_model=DeployDetail | None, summary="最近一次安装或升级的详情与输出")
+def deploy_detail(server_id: int, session: Session = Depends(get_session)):
+    return deploy_state(_get_server(session, server_id), with_log=True)
 
 
 @router.get("/servers/{server_id}", response_model=ServerOut, summary="服务器详情")
@@ -193,8 +298,10 @@ def update_server(
 ):
     server = _get_server(session, server_id)
     for field, value in body.model_dump(exclude_unset=True).items():
-        if field in ("name", "host", "port", "tags", "schedulable") and value is None:
+        if field in ("name", "host", "port", "tags", "schedulable", "ssh_port", "allow_roots") and value is None:
             raise HTTPException(422, f"{field} 不能为空")
+        if field == "ssh_user":
+            value = (value or "").strip() or None
         setattr(server, field, value)
     _commit(session)
     return server_out(server, settings, occupied=occupied_devices(session))

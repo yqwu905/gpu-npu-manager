@@ -4,7 +4,8 @@ import httpx
 from fastapi import FastAPI
 
 from .config import Settings
-from .db import Base, make_engine, make_session_factory
+from .deployer import Deployer
+from .db import Base, add_missing_columns, make_engine, make_session_factory
 from .poller import Poller
 from .evaluations import EvaluationCollector
 from .routers import jobs, overview, results, servers
@@ -16,11 +17,15 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
     settings = settings or Settings()
     engine = make_engine(settings.database_url)
     Base.metadata.create_all(engine)
+    add_missing_columns(engine)
     session_factory = make_session_factory(engine)
     poller = Poller(settings, session_factory, transport=transport)
     scheduler = Scheduler(settings, session_factory, transport=transport)
     collector = EvaluationCollector(settings, session_factory, scheduler.agent)
     scheduler.after_round.append(collector.run_once)
+    deployer = Deployer(settings, session_factory, scheduler.agent, poller)
+    deployer.recover()
+    scheduler.after_round.append(deployer.auto_upgrade)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -42,6 +47,7 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
     app.state.session_factory = session_factory
     app.state.poller = poller
     app.state.scheduler = scheduler
+    app.state.deployer = deployer
     app.include_router(overview.router)
     app.include_router(servers.router)
     app.include_router(jobs.router)

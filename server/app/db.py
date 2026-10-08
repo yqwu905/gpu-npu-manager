@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 
@@ -20,3 +20,17 @@ def make_engine(url):
 
 def make_session_factory(engine):
     return sessionmaker(bind=engine, expire_on_commit=False)
+
+
+def add_missing_columns(engine) -> None:
+    """给已有的表补上后来新增的列（都是可空列），旧数据库升级后不用手动迁移。"""
+    inspector = inspect(engine)
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            if not inspector.has_table(table.name):
+                continue
+            existing = {c["name"] for c in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name not in existing:
+                    ddl = column.type.compile(dialect=engine.dialect)
+                    conn.execute(text(f'ALTER TABLE {table.name} ADD COLUMN "{column.name}" {ddl}'))

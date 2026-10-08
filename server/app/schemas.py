@@ -53,6 +53,11 @@ class HostInfo(BaseModel):
 
 
 class ServerBase(BaseModel):
+    ssh_user: str | None = Field(
+        default=None, max_length=64, description="SSH 登录用户，填写后由中心服务安装和升级 Agent，任务以该用户运行"
+    )
+    ssh_port: int = Field(default=22, ge=1, le=65535, description="SSH 端口")
+    allow_roots: list[str] = Field(default=[], description="允许读取的目录（推理结果所在位置），为空时为登录用户家目录")
     group: str | None = Field(default=None, description="运行组，任务调度按运行组选择服务器")
     owner: str | None = Field(default=None, description="使用人")
     tags: list[str] = Field(default=[], description="标签，可多个")
@@ -71,7 +76,7 @@ class ServerBase(BaseModel):
 
 
 class ServerCreate(ServerBase):
-    name: str = Field(min_length=1, max_length=128)
+    name: str | None = Field(default=None, min_length=1, max_length=128, description="名称，不填时使用地址")
     host: str = Field(min_length=1, max_length=255, description="Agent 地址（IP 或域名）")
     port: int = Field(default=9100, ge=1, le=65535, description="Agent 端口")
 
@@ -82,6 +87,9 @@ class ServerUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=128)
     host: str | None = Field(default=None, min_length=1, max_length=255)
     port: int | None = Field(default=None, ge=1, le=65535)
+    ssh_user: str | None = Field(default=None, max_length=64)
+    ssh_port: int | None = Field(default=None, ge=1, le=65535)
+    allow_roots: list[str] | None = None
     group: str | None = None
     owner: str | None = None
     tags: list[str] | None = None
@@ -94,6 +102,21 @@ class ServerUpdate(BaseModel):
         return None if value is None else ServerBase._clean_tags(value)
 
 
+class DeployState(BaseModel):
+    status: Literal["pending", "running", "succeeded", "failed"] = Field(
+        description="pending 等待中 / running 执行中 / succeeded 成功 / failed 失败"
+    )
+    action: Literal["install", "upgrade"] | None = Field(default=None, description="install 首次安装 / upgrade 升级")
+    version: str | None = Field(default=None, description="部署的 Agent 版本")
+    error: str | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class DeployDetail(DeployState):
+    log: str | None = Field(default=None, description="SSH 执行输出（最后 20000 个字符）")
+
+
 class ServerOut(ServerBase):
     id: int
     name: str
@@ -103,6 +126,9 @@ class ServerOut(ServerBase):
     status: Literal["unknown", "online", "offline"]
     hostname: str | None = None
     agent_version: str | None = None
+    agent_outdated: bool = Field(default=False, description="Agent 版本与中心服务自带的版本不一致，需要升级")
+    managed: bool = Field(default=False, description="是否由中心服务通过 SSH 安装和升级 Agent")
+    deploy: DeployState | None = Field(default=None, description="最近一次安装或升级，从未部署过时为 null")
     host_info: HostInfo | None = None
     last_seen_at: datetime | None = None
     last_error: str | None = None
@@ -342,3 +368,32 @@ class SchedulerSettings(BaseModel):
     strict_order: bool = Field(
         description="true 严格按队列顺序调度；false 允许后面的任务在前面的任务等卡时先运行"
     )
+
+
+class ServerBatchCreate(BaseModel):
+    servers: list[ServerCreate] = Field(min_length=1, max_length=200)
+    deploy: bool = Field(default=True, description="添加后立即通过 SSH 安装 Agent（只对填写了 ssh_user 的服务器）")
+
+
+class BatchError(BaseModel):
+    index: int = Field(description="在请求 servers 中的位置，从 0 开始")
+    host: str
+    error: str
+
+
+class ServerBatchResult(BaseModel):
+    created: list[ServerOut]
+    errors: list[BatchError]
+
+
+class DeployRequest(BaseModel):
+    server_ids: list[int] | None = Field(default=None, description="要安装或升级的服务器，为空时按 outdated 选择")
+    outdated: bool = Field(default=False, description="server_ids 为空时，选择所有 Agent 版本落后或未安装的托管服务器")
+
+
+class AgentPackage(BaseModel):
+    version: str = Field(description="中心服务自带的 Agent 版本")
+    ssh_available: bool = Field(description="中心主机上是否有 ssh 命令")
+    public_key: str | None = Field(default=None, description="中心主机的 SSH 公钥，需要加入各服务器的 authorized_keys")
+    public_key_path: str | None = None
+    auto_upgrade: bool = Field(description="是否自动升级版本落后的 Agent")

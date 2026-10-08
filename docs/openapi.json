@@ -264,6 +264,20 @@
         ],
         "summary": "添加服务器",
         "operationId": "create_server_api_servers_post",
+        "parameters": [
+          {
+            "name": "deploy",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "填写了 ssh_user 时，添加后立即通过 SSH 安装 Agent",
+              "default": true,
+              "title": "Deploy"
+            },
+            "description": "填写了 ssh_user 时，添加后立即通过 SSH 安装 Agent"
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -561,6 +575,203 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/FilterOptions"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/servers/batch": {
+      "post": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "批量添加服务器",
+        "operationId": "batch_create_servers_api_servers_batch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServerBatchCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerBatchResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agent-package": {
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "Agent 安装包版本与 SSH 公钥",
+        "operationId": "agent_package_api_agent_package_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentPackage"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/servers/deploy": {
+      "post": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "批量安装或升级 Agent",
+        "operationId": "deploy_servers_api_servers_deploy_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeployRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ServerOut"
+                  },
+                  "type": "array",
+                  "title": "Response Deploy Servers Api Servers Deploy Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/servers/{server_id}/deploy": {
+      "post": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "安装或升级该服务器的 Agent",
+        "operationId": "deploy_server_api_servers__server_id__deploy_post",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Server Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "servers"
+        ],
+        "summary": "最近一次安装或升级的详情与输出",
+        "operationId": "deploy_detail_api_servers__server_id__deploy_get",
+        "parameters": [
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Server Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/DeployDetail"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Deploy Detail Api Servers  Server Id  Deploy Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -2005,6 +2216,79 @@
         ],
         "title": "AcceleratorSummary"
       },
+      "AgentPackage": {
+        "properties": {
+          "version": {
+            "type": "string",
+            "title": "Version",
+            "description": "中心服务自带的 Agent 版本"
+          },
+          "ssh_available": {
+            "type": "boolean",
+            "title": "Ssh Available",
+            "description": "中心主机上是否有 ssh 命令"
+          },
+          "public_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Public Key",
+            "description": "中心主机的 SSH 公钥，需要加入各服务器的 authorized_keys"
+          },
+          "public_key_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Public Key Path"
+          },
+          "auto_upgrade": {
+            "type": "boolean",
+            "title": "Auto Upgrade",
+            "description": "是否自动升级版本落后的 Agent"
+          }
+        },
+        "type": "object",
+        "required": [
+          "version",
+          "ssh_available",
+          "auto_upgrade"
+        ],
+        "title": "AgentPackage"
+      },
+      "BatchError": {
+        "properties": {
+          "index": {
+            "type": "integer",
+            "title": "Index",
+            "description": "在请求 servers 中的位置，从 0 开始"
+          },
+          "host": {
+            "type": "string",
+            "title": "Host"
+          },
+          "error": {
+            "type": "string",
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "index",
+          "host",
+          "error"
+        ],
+        "title": "BatchError"
+      },
       "CompareResultSet": {
         "properties": {
           "id": {
@@ -2033,6 +2317,211 @@
           "meta"
         ],
         "title": "CompareResultSet"
+      },
+      "DeployDetail": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "succeeded",
+              "failed"
+            ],
+            "title": "Status",
+            "description": "pending 等待中 / running 执行中 / succeeded 成功 / failed 失败"
+          },
+          "action": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "install",
+                  "upgrade"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action",
+            "description": "install 首次安装 / upgrade 升级"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version",
+            "description": "部署的 Agent 版本"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "log": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Log",
+            "description": "SSH 执行输出（最后 20000 个字符）"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "DeployDetail"
+      },
+      "DeployRequest": {
+        "properties": {
+          "server_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server Ids",
+            "description": "要安装或升级的服务器，为空时按 outdated 选择"
+          },
+          "outdated": {
+            "type": "boolean",
+            "title": "Outdated",
+            "description": "server_ids 为空时，选择所有 Agent 版本落后或未安装的托管服务器",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "DeployRequest"
+      },
+      "DeployState": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "succeeded",
+              "failed"
+            ],
+            "title": "Status",
+            "description": "pending 等待中 / running 执行中 / succeeded 成功 / failed 失败"
+          },
+          "action": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "install",
+                  "upgrade"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action",
+            "description": "install 首次安装 / upgrade 升级"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version",
+            "description": "部署的 Agent 版本"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "DeployState"
       },
       "DeviceHistory": {
         "properties": {
@@ -3649,8 +4138,86 @@
         ],
         "title": "SchedulerSettings"
       },
+      "ServerBatchCreate": {
+        "properties": {
+          "servers": {
+            "items": {
+              "$ref": "#/components/schemas/ServerCreate"
+            },
+            "type": "array",
+            "maxItems": 200,
+            "minItems": 1,
+            "title": "Servers"
+          },
+          "deploy": {
+            "type": "boolean",
+            "title": "Deploy",
+            "description": "添加后立即通过 SSH 安装 Agent（只对填写了 ssh_user 的服务器）",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "servers"
+        ],
+        "title": "ServerBatchCreate"
+      },
+      "ServerBatchResult": {
+        "properties": {
+          "created": {
+            "items": {
+              "$ref": "#/components/schemas/ServerOut"
+            },
+            "type": "array",
+            "title": "Created"
+          },
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/BatchError"
+            },
+            "type": "array",
+            "title": "Errors"
+          }
+        },
+        "type": "object",
+        "required": [
+          "created",
+          "errors"
+        ],
+        "title": "ServerBatchResult"
+      },
       "ServerCreate": {
         "properties": {
+          "ssh_user": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ssh User",
+            "description": "SSH 登录用户，填写后由中心服务安装和升级 Agent，任务以该用户运行"
+          },
+          "ssh_port": {
+            "type": "integer",
+            "maximum": 65535.0,
+            "minimum": 1.0,
+            "title": "Ssh Port",
+            "description": "SSH 端口",
+            "default": 22
+          },
+          "allow_roots": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Allow Roots",
+            "description": "允许读取的目录（推理结果所在位置），为空时为登录用户家目录",
+            "default": []
+          },
           "group": {
             "anyOf": [
               {
@@ -3703,10 +4270,18 @@
             "default": true
           },
           "name": {
-            "type": "string",
-            "maxLength": 128,
-            "minLength": 1,
-            "title": "Name"
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name",
+            "description": "名称，不填时使用地址"
           },
           "host": {
             "type": "string",
@@ -3726,7 +4301,6 @@
         },
         "type": "object",
         "required": [
-          "name",
           "host"
         ],
         "title": "ServerCreate"
@@ -3782,6 +4356,36 @@
       },
       "ServerOut": {
         "properties": {
+          "ssh_user": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ssh User",
+            "description": "SSH 登录用户，填写后由中心服务安装和升级 Agent，任务以该用户运行"
+          },
+          "ssh_port": {
+            "type": "integer",
+            "maximum": 65535.0,
+            "minimum": 1.0,
+            "title": "Ssh Port",
+            "description": "SSH 端口",
+            "default": 22
+          },
+          "allow_roots": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Allow Roots",
+            "description": "允许读取的目录（推理结果所在位置），为空时为登录用户家目录",
+            "default": []
+          },
           "group": {
             "anyOf": [
               {
@@ -3891,6 +4495,29 @@
               }
             ],
             "title": "Agent Version"
+          },
+          "agent_outdated": {
+            "type": "boolean",
+            "title": "Agent Outdated",
+            "description": "Agent 版本与中心服务自带的版本不一致，需要升级",
+            "default": false
+          },
+          "managed": {
+            "type": "boolean",
+            "title": "Managed",
+            "description": "是否由中心服务通过 SSH 安装和升级 Agent",
+            "default": false
+          },
+          "deploy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DeployState"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "最近一次安装或升级，从未部署过时为 null"
           },
           "host_info": {
             "anyOf": [
@@ -4015,6 +4642,45 @@
               }
             ],
             "title": "Port"
+          },
+          "ssh_user": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ssh User"
+          },
+          "ssh_port": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 65535.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ssh Port"
+          },
+          "allow_roots": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allow Roots"
           },
           "group": {
             "anyOf": [

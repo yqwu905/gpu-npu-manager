@@ -24,37 +24,44 @@ tests/          测试与 smi 输出样例
 scripts/        辅助脚本
 ```
 
-## 部署 Agent（每台服务器）
+## 安装中心服务（手动，一次）
 
-把 `agent/` 目录复制到服务器上，以 root 执行：
-
-```sh
-sudo ./install.sh <运行用户> <token> [端口，默认 9100] [允许读取的目录，多个用冒号分隔，默认运行用户家目录]
-```
-
-Agent 会自动检测 `nvidia-smi` 或 `npu-smi`。任务以安装时指定的运行用户执行，任务记录和日志保存在该用户的 `~/.gnm-agent/jobs/`（可用 `GNM_AGENT_DATA_DIR` 修改）。命令不在 PATH 中时，可在 `/etc/gnm-agent.env` 里用 `GNM_NVIDIA_SMI` / `GNM_NPU_SMI` 指定路径。
-
-中心服务只能通过 Agent 读取“允许读取的目录”下的文件，推理结果需要放在这些目录里。
-
-评测脚本 `evaluate.py` 会一起安装到 `/opt/gnm-agent/`，以运行用户的 `python3` 执行，需要 `numpy` 和 `Pillow`；LPIPS 另外需要 `torch` 和 `lpips`（首次运行会下载 AlexNet 权重，离线机器需提前放好缓存）。
-
-> `npu-smi info` 的解析目前基于公开资料中的 910B 和 310P 输出样例，接入真实机器后需要核对一次。
-
-## 运行中心服务
+需要 Python 3.10+ 和 OpenSSH 客户端；构建前端需要 Node 18+（也可以在别的机器上构建好再拷贝 `web/dist`）。
 
 ```sh
+git clone https://github.com/yqwu905/gpu-npu-manager && cd gpu-npu-manager
+(cd web && npm ci && npm run build)
 pip install -r server/requirements.txt
 cd server
 GNM_AGENT_TOKEN=<token> uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000
 ```
 
-先构建前端（需要 Node 18+，构建产物可以拷到没有 Node 的机器上）：
+打开 `http://<地址>:8000/` 进入管理页面，`http://<地址>:8000/docs` 可在线调试接口。升级中心服务时 `git pull` 后重新构建前端并重启即可，数据库会自动补上新增的列。
 
-```sh
-cd web && npm ci && npm run build
-```
+## 添加服务器（自动安装 Agent）
 
-打开 `http://<地址>:8000/` 进入管理页面，`http://<地址>:8000/docs` 可在线调试接口。常用环境变量：
+Agent 由中心服务通过 SSH 安装和升级，不需要登录各服务器操作：
+
+1. 在中心主机上准备 SSH 密钥（`ssh-keygen`），用 `ssh-copy-id <用户>@<服务器>` 把公钥分发到各服务器；页面“添加服务器”对话框里也会显示中心主机的公钥。
+2. 在“服务器”页点“添加服务器”，单台填写地址和 SSH 用户；或切到“批量”，每行一台：`[用户@]地址[:SSH端口] [名称]`。
+3. 中心服务登录后把 `agent.py`、`evaluate.py` 写到该用户的 `~/.gnm-agent/bin/`，启动 Agent 并用 crontab `@reboot` 设置开机自启。不需要 root，任务以该 SSH 用户运行。安装进度、错误和完整输出在服务器详情的“Agent”页。
+4. 中心服务升级后，版本落后的托管 Agent 会自动升级一次（`GNM_AUTO_UPGRADE=0` 可关闭）；也可以在页面上逐台或一键升级。升级只重启 Agent 进程，运行中的任务不受影响。
+
+服务器需要有 `python3`（3.7+）、`bash` 和 `base64`，中心主机要能访问 Agent 端口（默认 9100）。命令不在 PATH 中时，可在服务器的 `~/.gnm-agent/agent.local.env` 里写 `export GNM_NPU_SMI=/path/to/npu-smi`（升级不会覆盖），然后在页面上重新安装。
+
+Agent 会自动检测 `nvidia-smi` 或 `npu-smi`，任务记录和日志保存在 `~/.gnm-agent/jobs/`。中心服务只能通过 Agent 读取“允许读取的目录”（添加服务器时填写，默认登录用户家目录）下的文件，推理结果需要放在这些目录里。
+
+评测脚本以登录用户的 `python3` 执行，需要 `numpy` 和 `Pillow`；LPIPS 另外需要 `torch` 和 `lpips`（首次运行会下载 AlexNet 权重，离线机器需提前放好缓存）。
+
+> `npu-smi info` 的解析目前基于公开资料中的 910B 和 310P 输出样例，接入真实机器后需要核对一次。
+
+### 手动安装 Agent（不用 SSH 时）
+
+把 `agent/` 目录复制到服务器上，以 root 执行 `sudo ./install.sh <运行用户> <token> [端口] [允许读取的目录]`，装成 systemd 服务；然后在页面上添加服务器时不填 SSH 用户。手动安装的 Agent 不由中心服务升级。
+
+## 配置
+
+中心服务的环境变量：
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -69,7 +76,11 @@ cd web && npm ci && npm run build
 | `GNM_SCHEDULE_STRICT` | `0` | 设为 `1` 时严格按队列顺序调度，前面的任务放不下时后面的也不调度；运行期可用 `PATCH /api/scheduler` 切换 |
 | `GNM_WEB_DIR` | `web/dist` | 前端构建产物目录，不存在时只提供接口 |
 | `GNM_EVAL_PYTHON` | `python3` | 各服务器上运行评测脚本的解释器，可改成 conda 环境中的 python 路径 |
-| `GNM_EVAL_SCRIPT` | `/opt/gnm-agent/evaluate.py` | 各服务器上评测脚本的路径 |
+| `GNM_EVAL_SCRIPT` | 空 | 各服务器上评测脚本的路径，为空时用 Agent 所在目录下的 `evaluate.py` |
+| `GNM_SSH_COMMAND` | `ssh` | 安装 Agent 用的 ssh 命令，可附加参数，如 `ssh -i /path/key` |
+| `GNM_DEPLOY_CONCURRENCY` | `4` | 同时安装的服务器数 |
+| `GNM_DEPLOY_TIMEOUT` | `180` | 单台安装的 SSH 超时（秒） |
+| `GNM_AUTO_UPGRADE` | `1` | 中心服务升级后，自动把版本落后的托管 Agent 升级一次；设为 `0` 关闭，改为在页面上手动升级 |
 
 ## 推理结果格式
 

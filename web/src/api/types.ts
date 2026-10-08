@@ -55,6 +55,12 @@ export interface Server {
   status: ServerStatus
   hostname: string | null
   agent_version: string | null
+  agent_outdated: boolean
+  managed: boolean
+  deploy: DeployState | null
+  ssh_user: string | null
+  ssh_port: number
+  allow_roots: string[]
   host_info: HostInfo | null
   last_seen_at: string | null
   last_error: string | null
@@ -66,10 +72,36 @@ export interface Server {
   updated_at: string
 }
 
+export type DeployStatus = 'pending' | 'running' | 'succeeded' | 'failed'
+
+export interface DeployState {
+  status: DeployStatus
+  action: 'install' | 'upgrade' | null
+  version: string | null
+  error: string | null
+  started_at: string | null
+  finished_at: string | null
+}
+
+export interface DeployDetail extends DeployState {
+  log: string | null
+}
+
+export interface AgentPackage {
+  version: string
+  ssh_available: boolean
+  public_key: string | null
+  public_key_path: string | null
+  auto_upgrade: boolean
+}
+
 export interface ServerCreate {
-  name: string
+  name?: string | null
   host: string
   port?: number
+  ssh_user?: string | null
+  ssh_port?: number
+  allow_roots?: string[]
   group?: string | null
   owner?: string | null
   tags?: string[]
@@ -78,6 +110,11 @@ export interface ServerCreate {
 }
 
 export type ServerUpdate = Partial<ServerCreate>
+
+export interface ServerBatchResult {
+  created: Server[]
+  errors: { index: number; host: string; error: string }[]
+}
 
 export interface ServerGroup {
   key: string | null

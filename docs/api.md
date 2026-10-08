@@ -14,7 +14,8 @@
 | 服务器列表（筛选） | `GET /api/servers`、`GET /api/meta/filters` |
 | 服务器分组视图 | `GET /api/servers/grouped?by=group\|owner\|tag\|accelerator\|model\|status` |
 | 服务器详情 | `GET /api/servers/{id}`、`GET /api/servers/{id}/history`、`POST /api/servers/{id}/refresh` |
-| 添加 / 编辑服务器 | `POST /api/servers`、`PATCH /api/servers/{id}`、`DELETE /api/servers/{id}` |
+| 添加 / 编辑服务器 | `POST /api/servers`、`POST /api/servers/batch`、`GET /api/agent-package`、`PATCH /api/servers/{id}`、`DELETE /api/servers/{id}` |
+| 安装 / 升级 Agent | `POST /api/servers/{id}/deploy`、`POST /api/servers/deploy`、`GET /api/servers/{id}/deploy` |
 | 任务队列 / 任务列表 | `GET /api/jobs`、`GET /api/scheduler`、`PATCH /api/scheduler` |
 | 提交任务 | `POST /api/jobs`（运行组候选值来自 `GET /api/meta/filters`） |
 | 结果集列表 / 登记 | `GET /api/results`、`POST /api/results` |
@@ -64,7 +65,11 @@
 {
   "id": 1, "name": "npu-01", "host": "10.0.0.11", "port": 9100,
   "group": "cv", "owner": "alice", "tags": ["910B", "lab1"], "note": null, "schedulable": true,
-  "accelerator": "npu", "status": "online", "hostname": "node11", "agent_version": "0.1.0",
+  "ssh_user": "alice", "ssh_port": 22, "allow_roots": ["/data/results"],
+  "accelerator": "npu", "status": "online", "hostname": "node11", "agent_version": "0.1.0+aabf8f791b",
+  "agent_outdated": false, "managed": true,
+  "deploy": {"status": "succeeded", "action": "install", "version": "0.1.0+aabf8f791b", "error": null,
+             "started_at": "2026-10-08T14:00:01Z", "finished_at": "2026-10-08T14:00:09Z"},
   "host_info": {
     "cpu_count": 192, "cpu_percent": 12.5, "load1": 3.2,
     "memory_total_mb": 1546000, "memory_used_mb": 210000,
@@ -90,6 +95,9 @@
 字段说明：
 
 - `status`：连续 3 次拉取失败判定为 `offline`，`last_error` 给出最后一次错误原因。
+- `managed`：填写了 `ssh_user`，由中心服务通过 SSH 安装和升级 Agent；任务以该用户运行。
+- `agent_version`：Agent 版本，`+` 后面是 agent.py 和 evaluate.py 的内容摘要；`agent_outdated` 表示与中心服务自带的版本不一致。
+- `deploy`：最近一次安装或升级，从未通过 SSH 部署过时为 `null`。`status` 为 `pending` / `running` / `succeeded` / `failed`，`action` 为 `install` / `upgrade`，失败原因在 `error`。
 - `devices[].index`：逻辑卡号，任务调度时就是 `CUDA_VISIBLE_DEVICES` / `ASCEND_RT_VISIBLE_DEVICES` 的值。
 - `devices[].utilization`：GPU 为 GPU 利用率，NPU 为 AICore 利用率，单位 %。
 - `devices[].memory_*`：GPU 为显存，910B 为 HBM，310P 为板载内存，单位 MB。
@@ -117,19 +125,51 @@
  "models": ["910B2", "NVIDIA A100-SXM4-80GB"], "accelerators": ["gpu", "npu"]}
 ```
 
-### POST /api/servers
+### POST /api/servers?deploy=true
 
-添加服务器，添加后会立即尝试连接一次。
+添加服务器。
 
 ```json
-{"name": "npu-01", "host": "10.0.0.11", "port": 9100, "group": "cv", "owner": "alice", "tags": ["910B"], "note": "", "schedulable": true}
+{"name": "npu-01", "host": "10.0.0.11", "port": 9100, "ssh_user": "alice", "ssh_port": 22, "allow_roots": ["/data/results"],
+ "group": "cv", "owner": "alice", "tags": ["910B"], "note": "", "schedulable": true}
 ```
 
-`name` 和 `host` 必填，`port` 默认 9100。名称重复返回 409。
+只有 `host` 必填；`name` 不填时用地址，`port`（Agent 端口）默认 9100。填写 `ssh_user` 时，添加后立即通过 SSH 安装 Agent（`?deploy=false` 只登记不安装）；不填表示 Agent 已手动安装，添加后立即尝试连接一次。名称重复返回 409。
+
+### POST /api/servers/batch
+
+批量添加，请求体 `{"servers": [与上面相同的对象, ...], "deploy": true}`，最多 200 台。名称重复的条目跳过，其余照常添加：
+
+```json
+{"created": [ServerOut, ...], "errors": [{"index": 2, "host": "10.0.0.13", "error": "名称 npu-03 已存在"}]}
+```
+
+### GET /api/agent-package
+
+中心服务自带的 Agent 版本和 SSH 准备情况，用于添加对话框里的提示。
+
+```json
+{"version": "0.1.0+aabf8f791b", "ssh_available": true, "public_key": "ssh-ed25519 AAAA... root@center",
+ "public_key_path": "/root/.ssh/id_ed25519.pub", "auto_upgrade": true}
+```
+
+`public_key` 需要加入各服务器 SSH 用户的 `~/.ssh/authorized_keys`；中心主机还没有密钥时为 `null`。
+
+### POST /api/servers/{id}/deploy
+
+在后台安装或升级该服务器的 Agent，立即返回 `ServerOut`（`deploy.status` 为 `pending`）。没有填写 `ssh_user` 或正在安装时返回 409。安装过程：SSH 登录（密钥免密），把 Agent 写到 `~/.gnm-agent/bin/`，停掉旧进程后启动，再等待 Agent 响应并核对版本。升级只重启 Agent 进程，运行中的任务不受影响。
+
+### POST /api/servers/deploy
+
+批量安装或升级。`{"server_ids": [1, 2]}` 指定服务器，或 `{"outdated": true}` 选择所有版本落后或尚未安装的托管服务器。返回实际开始部署的 `ServerOut` 列表（跳过没有 SSH 信息和正在安装的）。
+
+### GET /api/servers/{id}/deploy
+
+最近一次安装或升级的详情，比 `ServerOut.deploy` 多一个 `log` 字段（SSH 执行输出，最后 20000 个字符）；从未部署过时返回 `null`。部署进行中时前端可以每 2 秒轮询一次。
 
 ### PATCH /api/servers/{id}
 
-只提交要修改的字段，例如 `{"owner": "bob", "tags": ["a100"]}`。`group`、`owner`、`note` 可以设为 `null` 清空。名称重复返回 409。
+只提交要修改的字段，例如 `{"owner": "bob", "tags": ["a100"]}`。`group`、`owner`、`note`、`ssh_user` 可以设为 `null` 清空。修改 `ssh_user`、`allow_roots`、`port` 后需要重新安装 Agent 才生效。名称重复返回 409。
 
 ### DELETE /api/servers/{id}
 
