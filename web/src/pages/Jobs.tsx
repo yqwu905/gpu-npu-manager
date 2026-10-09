@@ -35,6 +35,7 @@ export default function JobsPage() {
   const [submitter, setSubmitter] = useState('')
   const [group, setGroup] = useState('')
   const [showSubmit, setShowSubmit] = useState(false)
+  const [copyFrom, setCopyFrom] = useState<Job | null>(null)
   const [actionErr, setActionErr] = useState<string | null>(null)
   const jobs = usePoll(() => jobsApi.list(), [], 5_000)
   const sched = usePoll(() => jobsApi.scheduler(), [], 30_000)
@@ -88,7 +89,7 @@ export default function JobsPage() {
           </span>
           严格按顺序
         </button>)}
-        <button className="btn pri" type="button" onClick={() => setShowSubmit(true)}><IconPlus />提交任务</button>
+        <button className="btn pri" type="button" onClick={() => { setCopyFrom(null); setShowSubmit(true) }}><IconPlus />提交任务</button>
       </header>
 
       <div className="row wrap" style={{ gap: 6 }}>
@@ -140,6 +141,8 @@ export default function JobsPage() {
                     </td>
                     <td><div>{t1}</div><div className="lbl">{t2}</div></td>
                     <td className="num">
+                      <span className="row" style={{ gap: 6, justifyContent: 'flex-end' }}>
+                      <button type="button" className="btn sm" title="复制参数到提交页面，修改后再提交" onClick={stop(() => { setCopyFrom(j); setShowSubmit(true) })}>复制</button>
                       {(j.status === 'queued' || j.status === 'running' || j.status === 'starting') && (
                         <button type="button" className="btn sm danger" onClick={stop(() => {
                           if (j.status === 'queued' || window.confirm(`取消运行中的任务 #${j.id}？会终止整个进程组。`)) act(() => jobsApi.cancel(j.id))
@@ -151,11 +154,12 @@ export default function JobsPage() {
                         })}>强制取消</button>
                       )}
                       {['succeeded', 'failed', 'cancelled'].includes(j.status) && (
-                        <span className="row" style={{ gap: 6, justifyContent: 'flex-end' }}>
+                        <>
                           <button type="button" className="btn sm" onClick={stop(() => act(() => jobsApi.requeue(j.id), true))}>重新排队</button>
                           <button type="button" className="btn sm danger" onClick={stop(() => remove(j))}>删除</button>
-                        </span>
+                        </>
                       )}
+                      </span>
                     </td>
                   </tr>
                 )
@@ -167,7 +171,7 @@ export default function JobsPage() {
         {sel && <JobDetail key={sel.id} j={sel} />}
       </div>
 
-      {showSubmit && <SubmitDrawer onClose={() => setShowSubmit(false)} onSubmitted={(j) => { setShowSubmit(false); setTab('all'); jobs.reload(); setParams({ id: String(j.id) }, { replace: true }) }} />}
+      {showSubmit && <SubmitDrawer from={copyFrom} onClose={() => setShowSubmit(false)} onSubmitted={(j) => { setShowSubmit(false); setTab('all'); jobs.reload(); setParams({ id: String(j.id) }, { replace: true }) }} />}
     </main>
   )
 }
@@ -266,17 +270,18 @@ function JobDetail({ j }: { j: Job }) {
   )
 }
 
-function SubmitDrawer({ onClose, onSubmitted }: { onClose: () => void; onSubmitted: (j: Job) => void }) {
+function SubmitDrawer({ from, onClose, onSubmitted }: { from?: Job | null; onClose: () => void; onSubmitted: (j: Job) => void }) {
   const servers = usePoll(() => serversApi.list({ include_devices: false }), [], 10_000)
-  const [name, setName] = useState('')
-  const [command, setCommand] = useState('')
-  const [workdir, setWorkdir] = useState('')
-  const [acc, setAcc] = useState<'' | Accelerator>('')
-  const [env, setEnv] = useState('')
-  const [group, setGroup] = useState<string | null>(null)
-  const [count, setCount] = useState(1)
-  const [serverId, setServerId] = useState('')
-  const [priority, setPriority] = useState('0')
+  // 复制任务时用原任务的参数预填，提交人仍取本机记住的值
+  const [name, setName] = useState(from?.name ?? '')
+  const [command, setCommand] = useState(from?.command ?? '')
+  const [workdir, setWorkdir] = useState(from?.workdir ?? '')
+  const [acc, setAcc] = useState<'' | Accelerator>(from?.accelerator ?? '')
+  const [env, setEnv] = useState(from ? Object.entries(from.env).map(([k, v]) => `${k}=${v}`).join('\n') : '')
+  const [group, setGroup] = useState<string | null>(from ? from.group ?? '' : null)
+  const [count, setCount] = useState(from?.num_devices ?? 1)
+  const [serverId, setServerId] = useState(from?.server_id ? String(from.server_id) : '')
+  const [priority, setPriority] = useState(String(from?.priority ?? 0))
   const [submitter, setSubmitter] = useState(() => localStorage.getItem('gnm.submitter') ?? '')
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -319,7 +324,7 @@ function SubmitDrawer({ onClose, onSubmitted }: { onClose: () => void; onSubmitt
   }
 
   return (
-    <Modal title="提交任务" onClose={onClose} drawer>
+    <Modal title={from ? `复制任务 #${from.id}` : '提交任务'} onClose={onClose} drawer>
       <form className="col" style={{ gap: 14, flexGrow: 1 }} onSubmit={(e) => { e.preventDefault(); submit() }}>
         <label className="field"><span className="lbl">名称（不填则取命令第一行）</span><input className="inp" value={name} onChange={(e) => setName(e.target.value)} autoFocus /></label>
         <label className="field"><span className="lbl">命令</span><textarea className="inp mono" rows={3} style={{ fontSize: 13 }} value={command} onChange={(e) => setCommand(e.target.value)} placeholder="bash scripts/train.sh --config configs/v4.yaml" required /></label>
