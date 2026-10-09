@@ -25,6 +25,7 @@ export interface Device {
   power_w: number | null
   power_limit_w: number | null
   health: string | null
+  health_detail?: string | null
   processes: Process[]
   idle: boolean
   updated_at: string | null

@@ -52,3 +52,39 @@ def test_parse_nvidia():
     assert [p["pid"] for p in first["processes"]] == [4242]
     assert second["power_w"] is None  # [N/A]
     assert second["processes"] == []
+
+
+def test_npu_health_detail(tmp_path):
+    """健康状态不是 OK 的卡，用 npu-smi info -t health 查询告警码和说明。"""
+    table = read("npu-smi-910b.txt").replace("| 7     910B2               | OK     ", "| 7     910B2               | Warning")
+    (tmp_path / "info.txt").write_text(table)
+    (tmp_path / "health.txt").write_text(
+        "        Health Status                  : Warning\n"
+        "        Error Code                     : 80E01801\n"
+        "        Error Information              : node type=SOC, sensor type=Temperature\n"
+    )
+    smi = tmp_path / "npu-smi"
+    smi.write_text(
+        "#!/bin/sh\n"
+        f'echo "$@" >> {tmp_path}/args\n'
+        f'if [ "$2" = "-t" ]; then cat {tmp_path}/health.txt; else cat {tmp_path}/info.txt; fi\n'
+    )
+    smi.chmod(0o755)
+    devices = {d["npu_id"]: d for d in agent.collect_npu(str(smi))}
+    assert devices[7]["health"] == "Warning"
+    assert devices[7]["health_detail"] == "80E01801 node type=SOC, sensor type=Temperature"
+    assert devices[0]["health_detail"] is None
+    assert (tmp_path / "args").read_text().splitlines() == ["info", "info -t health -i 7 -c 0"]
+    assert agent.parse_npu_health("Health Status : OK\nError Code : NA\nError Information : NA\n") is None
+
+
+def test_warning_card_still_idle():
+    """一般告警（Warning）的卡空闲时仍可调度，Alarm、Critical 等不可用。"""
+    from app.config import Settings
+    from app.models import Device, Server
+    from app.views import device_is_idle
+
+    server = Server(id=1, status="online")
+    for health, idle in [("OK", True), ("Warning", True), ("Alarm", False), ("Critical", False), ("UNKNOWN", False)]:
+        device = Device(index=0, vendor="ascend", health=health, processes=[], memory_used_mb=3100)
+        assert device_is_idle(server, device, Settings()) is idle, health

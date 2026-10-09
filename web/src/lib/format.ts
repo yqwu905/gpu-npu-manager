@@ -44,7 +44,8 @@ export const DEVICE_LOOK: Record<string, Look> = {
 /** 卡状态：任务占用信息（job_id）要等第 2 步接口提供，之前统一显示为“已占用” */
 export function deviceState(server: Server, d: Device): keyof typeof DEVICE_LOOK {
   if (server.status !== 'online') return 'offline'
-  if (d.health && d.health.toUpperCase() !== 'OK') return 'unhealthy'
+  // 一般告警（Warning）不影响使用，Alarm、Critical 等才视为不可用
+  if (d.health && !['OK', 'WARNING'].includes(d.health.toUpperCase())) return 'unhealthy'
   if (d.job_id) return 'job'
   if (d.idle) return 'idle'
   return 'job_id' in d ? 'external' : 'busy'

@@ -313,8 +313,36 @@ def parse_npu_smi_info(text):
     return devices
 
 
+def parse_npu_health(text):
+    """解析 `npu-smi info -t health -i <NPU> -c <Chip>`，返回告警码和说明，没有告警时返回 None。
+
+    输出形如：
+      Health Status                  : Warning
+      Error Code                     : 80E01801
+      Error Information              : ...
+    """
+    fields = {}
+    for line in text.splitlines():
+        key, sep, value = line.partition(":")
+        if sep:
+            fields[key.strip().lower()] = value.strip()
+    parts = [v for v in (fields.get("error code"), fields.get("error information")) if v and v.upper() != "NA"]
+    return " ".join(parts) or None
+
+
 def collect_npu(smi):
-    return parse_npu_smi_info(_run([smi, "info"]))
+    devices = parse_npu_smi_info(_run([smi, "info"]))
+    # 只对健康状态不是 OK 的卡查询告警详情，正常情况下不增加开销
+    for device in devices:
+        device["health_detail"] = None
+        if device["health"] and device["health"].upper() != "OK" and device["chip_id"] is not None:
+            try:
+                device["health_detail"] = parse_npu_health(
+                    _run([smi, "info", "-t", "health", "-i", str(device["npu_id"]), "-c", str(device["chip_id"])])
+                )
+            except RuntimeError as exc:
+                device["health_detail"] = str(exc)[:500]
+    return devices
 
 
 # ---------------------------------------------------------------------------

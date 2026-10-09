@@ -83,7 +83,7 @@
       "bus_id": "0000:C1:00.0", "uuid": null,
       "memory_total_mb": 65536, "memory_used_mb": 3862,
       "utilization": 0, "temperature": 43, "power_w": 107.3, "power_limit_w": null,
-      "health": "OK", "idle": false, "job_id": 42,
+      "health": "OK", "health_detail": null, "idle": false, "job_id": 42,
       "processes": [{"pid": 218169, "name": "ray_RayTrainW", "user": "alice", "memory_mb": 558}],
       "updated_at": "2026-10-08T14:06:32Z"
     }
