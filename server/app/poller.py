@@ -40,6 +40,10 @@ def apply_status(session, server: Server, payload: dict, settings: Settings, now
     server.last_error = "; ".join(payload.get("errors") or []) or None
     server.hostname = payload.get("hostname")
     server.agent_version = payload.get("agent_version")
+    # 安装时没连上（例如当时防火墙未放通、后来改为 SSH 转发），但目标版本的 Agent 其实已经在运行
+    if server.deploy_status == "failed" and server.deploy_version and server.agent_version == server.deploy_version:
+        server.deploy_status = "succeeded"
+        server.deploy_error = None
     server.host_info = payload.get("host")
     if payload.get("accelerator"):
         server.accelerator = payload["accelerator"]

@@ -219,3 +219,22 @@ def test_tunnel_failure_reported(tmp_path):
         # 关闭转发后直接连接
         client.patch(f"/api/servers/{sid}", json={"ssh_tunnel": False})
         assert "SSH" not in client.post(f"/api/servers/{sid}/refresh").json()["last_error"]
+
+
+def test_failed_deploy_cleared_when_agent_reachable(tmp_path):
+    """安装时连不上 Agent，之后（例如改走 SSH 转发）连上且版本正确，安装失败的提示应消除。"""
+    from app.models import Server
+    from app.poller import apply_status
+
+    with make_client(tmp_path) as client:
+        version = client.app.state.deployer.version
+        sid = client.post("/api/servers", json={"host": "h", "ssh_user": "a"}, params={"deploy": False}).json()["id"]
+        with client.app.state.session_factory() as session:
+            server = session.get(Server, sid)
+            server.deploy_status, server.deploy_version, server.deploy_error = "failed", version, "20 秒内连不上 Agent"
+            apply_status(session, server, {"agent_version": "0.0.1+old"}, client.app.state.settings, server.created_at)
+            assert server.deploy_status == "failed"  # 版本不对，仍算失败
+            apply_status(session, server, {"agent_version": version}, client.app.state.settings, server.created_at)
+            session.commit()
+        deploy = client.get(f"/api/servers/{sid}").json()["deploy"]
+        assert deploy["status"] == "succeeded" and deploy["error"] is None
