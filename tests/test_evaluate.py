@@ -1,4 +1,6 @@
 import json
+import os
+import sys
 
 import numpy as np
 import pytest
@@ -107,3 +109,61 @@ def test_ocr_label_reference(tmp_path):
     assert result["counts"] == {"ocr_a": 2, "cer": 2}
     assert result["metrics"]["ocr_a"] == pytest.approx(0.5)
     assert result["metrics"]["cer"] == pytest.approx(1 / (len("标题\nP18 P38\n第二行") + 4))
+
+
+class FakePaddleOCR3:
+    """模拟 paddleocr 3.x：predict 返回含 rec_texts / rec_polys 的结果。"""
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+    def predict(self, path):
+        name = os.path.basename(path)
+        texts = {"a.png": ["P38", "标题"], "b.png": ["HEFV"]}[name]
+        polys = {"a.png": [[[300, 10], [400, 10], [400, 50], [300, 50]], [[10, 300], [90, 300], [90, 340], [10, 340]]],
+                 "b.png": [[[0, 0], [100, 0], [100, 40], [0, 40]]]}[name]
+        return [{"rec_texts": texts, "rec_polys": [np.array(p) for p in polys]}]
+
+
+class FakePaddleOCR2:
+    """模拟 paddleocr 2.x：ocr 返回 [[框, (文本, 置信度)], ...]，没有文字时为 None。"""
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+    def ocr(self, path, cls=True):
+        if os.path.basename(path) == "b.png":
+            return [None]
+        return [[[[[300, 10], [400, 10], [400, 50], [300, 50]], ("P38", 0.9)],
+                 [[[10, 300], [90, 300], [90, 340], [10, 340]], ("标题", 0.9)]]]
+
+
+@pytest.mark.parametrize("engine", [FakePaddleOCR3, FakePaddleOCR2])
+def test_ocr_on_predicted_images(tmp_path, monkeypatch, engine):
+    """样本只有预测图时，用 PaddleOCR 识别后再和标注比较。"""
+    import types
+
+    monkeypatch.setitem(sys.modules, "paddleocr", types.SimpleNamespace(PaddleOCR=engine))
+    for name in ("a", "b"):
+        Image.fromarray(np.zeros((8, 8, 3), np.uint8)).save(tmp_path / f"{name}.png")
+    label = tmp_path / "Label.txt"
+    label.write_text(
+        'a.jpg\t[{"transcription": "P38", "points": [[300, 12], [400, 12], [400, 52], [300, 52]]},'
+        ' {"transcription": "标题", "points": [[10, 300], [90, 300], [90, 340], [10, 340]]}]\n'
+        'b.jpg\t[{"transcription": "HEFU", "points": [[0, 0], [100, 0], [100, 40], [0, 40]]}]\n'
+    )
+    out = tmp_path / "eval"
+    result = evaluate.evaluate(str(tmp_path), str(out), ["ocr_a", "cer"], reference_path=str(label),
+                               device="cuda:0", log=lambda *_: None)
+    assert result["counts"] == {"ocr_a": 2, "cer": 2} and result["metrics"]["ocr_a"] == pytest.approx(0.5)
+    ocr_lines = (out / "ocr_results.txt").read_text().splitlines()
+    assert ocr_lines[0].startswith("a.png\t") and json.loads(ocr_lines[0].split("\t")[1])[1]["transcription"] == "标题"
+
+
+def test_ocr_unavailable(tmp_path, monkeypatch):
+    monkeypatch.setitem(sys.modules, "paddleocr", None)  # import 失败
+    Image.fromarray(np.zeros((8, 8, 3), np.uint8)).save(tmp_path / "a.png")
+    (tmp_path / "Label.txt").write_text('a.jpg\t[{"transcription": "x", "points": [[0, 0], [1, 1]]}]\n')
+    result = evaluate.evaluate(str(tmp_path), str(tmp_path / "eval"), ["cer"],
+                               reference_path=str(tmp_path / "Label.txt"), log=lambda *_: None)
+    assert result["metrics"]["cer"] is None and "paddleocr" in result["errors"]["cer"]

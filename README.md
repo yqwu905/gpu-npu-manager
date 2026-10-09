@@ -102,7 +102,7 @@ model-a/
 | 字段 | 说明 |
 | --- | --- |
 | `image` / `ref_image` | 预测图与参考图路径，相对路径相对于 predictions.jsonl 所在目录；用于 PSNR、SSIM、LPIPS |
-| `text` / `ref_text` | 识别文本与参考文本；用于 OCR-A、CER、1-NED |
+| `text` / `ref_text` | 识别文本与参考文本；用于 OCR-A、CER、1-NED。没有 `text` 但有 `image` 时，评测会用 PaddleOCR 识别预测图得到文本 |
 
 参考值也可以放在单独的 jsonl 或目录里（发起评测时填 `reference`），jsonl 按 `id` 合并 `ref_image`、`ref_text`。
 
@@ -112,7 +112,9 @@ model-a/
 xxx_INPUT.jpg	[{"transcription": "手機報在线", "points": [[1179, 551], [1652, 544], [1654, 666], [1181, 673]], "difficult": false}, ...]
 ```
 
-按图片文件名（去掉扩展名）与样本 ID 配对，对不上时按不含目录的文件名配对。`difficult` 为 true 或内容为 `###` 的框不参与评测；其余框按阅读顺序拼成参考文本：中心高度相近的框算同一行，行内从左到右用空格连接，行与行之间用换行连接。其他字段会原样展示在样本浏览页。
+按图片文件名（去掉扩展名）与样本 ID 配对，对不上时按不含目录的文件名配对。`difficult` 为 true 或内容为 `###` 的框不参与评测；其余框按阅读顺序拼成参考文本：中心高度相近的框算同一行，行内从左到右用空格连接，行与行之间用换行连接。
+
+样本没有现成的识别文本时，评测会在结果所在的服务器上用 PaddleOCR 对预测图做检测和识别，识别出的框按同样的规则拼成文本，再与参考文本比较；识别结果保存在评测输出目录的 `ocr_results.txt`（与标注文件同样的格式）。这需要服务器上运行评测的 Python 环境装有 `paddleocr`（2.x 或 3.x）和对应的 `paddlepaddle`（GPU 用 `paddlepaddle-gpu`，昇腾 NPU 需要 PaddlePaddle 的 NPU 插件）；没有安装时文字指标会显示“OCR 初始化失败”。评测给了卡时 OCR 在卡上运行，0 张卡时用 CPU。其他字段会原样展示在样本浏览页。
 
 指标定义：
 

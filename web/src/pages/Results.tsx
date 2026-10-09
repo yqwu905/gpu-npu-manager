@@ -292,7 +292,7 @@ function EvalDialog({ r, evaluators, onClose, onDone }: { r: ResultSet; evaluato
           <label className="field" style={{ flex: '1 1 0', minWidth: 0 }}><span className="lbl">优先级（-100 ~ 100）</span><input className="inp mono" inputMode="numeric" value={priority} onChange={(e) => setPriority(e.target.value)} /></label>
           <label className="field" style={{ flex: '1 1 0', minWidth: 0 }}><span className="lbl">提交人</span><input className="inp" value={submitter} onChange={(e) => setSubmitter(e.target.value)} /></label>
         </div>
-        <div className="notice">提交后作为任务进入队列，在结果集所在服务器上运行。LPIPS 可以用 1 张卡加速，其他指标用 0 张卡即可。</div>
+        <div className="notice">提交后作为任务进入队列，在结果集所在服务器上运行。LPIPS 和需要 OCR 的文字指标（样本只有图片、没有识别文本时会用 PaddleOCR 识别）可以用 1 张卡加速，其他指标用 0 张卡即可。</div>
         {err && <div className="notice err">{err}</div>}
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn" onClick={onClose}>取消</button>
