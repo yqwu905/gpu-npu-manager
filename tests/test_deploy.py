@@ -238,3 +238,28 @@ def test_failed_deploy_cleared_when_agent_reachable(tmp_path):
             session.commit()
         deploy = client.get(f"/api/servers/{sid}").json()["deploy"]
         assert deploy["status"] == "succeeded" and deploy["error"] is None
+
+
+def test_relay_when_forwarding_prohibited(tmp_path, monkeypatch):
+    """sshd 禁止端口转发时，改为经 ssh 标准输入输出中继访问 Agent。"""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("FAKE_SSH_HOME", str(home))
+    monkeypatch.setenv("FAKE_SSH_LOG", str(tmp_path / "ssh.log"))
+    monkeypatch.setenv("FAKE_SSH_NO_FORWARD", "1")
+    ssh = str(ROOT / "tests" / "fake_ssh.py")
+    try:
+        with make_client(tmp_path, ssh_command=ssh) as client:
+            sid = client.post("/api/servers", json={"host": "127.0.0.1", "port": free_port(), "ssh_user": "alice"}).json()["id"]
+            wait_deploys(client)
+            server = client.get(f"/api/servers/{sid}").json()
+            assert server["deploy"]["status"] == "succeeded", server["deploy"]
+            assert server["status"] == "online"
+            log = (tmp_path / "ssh.log").read_text()
+            assert "ControlMaster=auto" in log and "exec python3 -c" in log
+            # 每次请求新建一个中继连接
+            for _ in range(3):
+                assert client.post(f"/api/servers/{sid}/refresh").json()["status"] == "online"
+        assert "-O exit" in (tmp_path / "ssh.log").read_text()
+    finally:
+        stop_agent(home)

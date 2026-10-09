@@ -159,6 +159,9 @@ class Poller:
                     error = str(result)
                 else:
                     error = f"{type(result).__name__}: {result}" if str(result) else type(result).__name__
+                    hint = self.tunnels.hint(target.host, target.port) if self.tunnels is not None else None
+                    if hint:
+                        error += f"（SSH：{hint}）"
                 await asyncio.to_thread(self._save, target.id, None, error)
             else:
                 await asyncio.to_thread(self._save, target.id, result, None)
