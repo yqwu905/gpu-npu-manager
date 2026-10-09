@@ -116,6 +116,7 @@ class FakePaddleOCR3:
 
     def __init__(self, **kwargs):
         self.kwargs = kwargs
+        FakePaddleOCR3.last_kwargs = kwargs
 
     def predict(self, path):
         name = os.path.basename(path)
@@ -153,8 +154,15 @@ def test_ocr_on_predicted_images(tmp_path, monkeypatch, engine):
         'b.jpg\t[{"transcription": "HEFU", "points": [[0, 0], [100, 0], [100, 40], [0, 40]]}]\n'
     )
     out = tmp_path / "eval"
+    logs = []
     result = evaluate.evaluate(str(tmp_path), str(out), ["ocr_a", "cer"], reference_path=str(label),
-                               device="cuda:0", log=lambda *_: None)
+                               device="cuda:0", log=logs.append)
+    assert logs[0] == "共 3 个样本，指标 ocr_a,cer，设备 cuda:0" and logs[-1].startswith("已处理 3/3")
+    if engine is FakePaddleOCR3:
+        # 评测不需要文档方向分类和去扭曲，3.x 默认开启
+        assert FakePaddleOCR3.last_kwargs["device"] == "gpu:0"
+        assert FakePaddleOCR3.last_kwargs["use_doc_unwarping"] is False
+        assert FakePaddleOCR3.last_kwargs["use_doc_orientation_classify"] is False
     assert result["counts"] == {"ocr_a": 2, "cer": 2} and result["metrics"]["ocr_a"] == pytest.approx(0.5)
     ocr_lines = (out / "ocr_results.txt").read_text().splitlines()
     assert ocr_lines[0].startswith("a.png\t") and json.loads(ocr_lines[0].split("\t")[1])[1]["transcription"] == "标题"

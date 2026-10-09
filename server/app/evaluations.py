@@ -196,7 +196,8 @@ def evaluation_job(settings: Settings, result: ResultSet, evaluation: Evaluation
         name=f"评测 {result.name}",
         command=build_command(settings, result, evaluation, device),
         workdir=evaluation.data_path or result.path,
-        env={},
+        # 任务日志是文件，不加时 Python 的输出按块缓冲，进度和第三方库的日志要很久才出现
+        env={"PYTHONUNBUFFERED": "1"},
         num_devices=num_devices,
         server_id=server.id,
         priority=priority,

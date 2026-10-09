@@ -115,7 +115,7 @@ xxx_INPUT.jpg	[{"transcription": "手機報在线", "points": [[1179, 551], [165
 
 按图片文件名（去掉扩展名）与样本 ID 配对，对不上时按不含目录的文件名配对。`difficult` 为 true 或内容为 `###` 的框不参与评测；其余框按阅读顺序拼成参考文本：中心高度相近的框算同一行，行内从左到右用空格连接，行与行之间用换行连接。
 
-样本没有现成的识别文本时，评测会在结果所在的服务器上用 PaddleOCR 对预测图做检测和识别，识别出的框按同样的规则拼成文本，再与参考文本比较；识别结果保存在评测输出目录的 `ocr_results.txt`（与标注文件同样的格式）。这需要服务器上运行评测的 Python 环境装有 `paddleocr`（2.x 或 3.x）和对应的 `paddlepaddle`（GPU 用 `paddlepaddle-gpu`，昇腾 NPU 需要 PaddlePaddle 的 NPU 插件）；没有安装时文字指标会显示“OCR 初始化失败”。评测给了卡时 OCR 在卡上运行，0 张卡时用 CPU。其他字段会原样展示在样本浏览页。
+样本没有现成的识别文本时，评测会在结果所在的服务器上用 PaddleOCR 对预测图做检测和识别，识别出的框按同样的规则拼成文本，再与参考文本比较；识别结果保存在评测输出目录的 `ocr_results.txt`（与标注文件同样的格式）。这需要服务器上运行评测的 Python 环境装有 `paddleocr`（2.x 或 3.x）和对应的 `paddlepaddle`（GPU 用 `paddlepaddle-gpu`，昇腾 NPU 需要 PaddlePaddle 的 NPU 插件）；没有安装时文字指标会显示“OCR 初始化失败”。评测给了卡时 OCR 在卡上运行，0 张卡时用 CPU。3.x 默认的文档方向分类和 UVDoc 去扭曲在评测时关闭。PaddleOCR 第一次运行会从 HuggingFace（或 BOS 等）下载模型到 `~/.paddlex/official_models`，离线服务器需要先把模型放到这个目录。评测日志每 10 秒输出一次进度。其他字段会原样展示在样本浏览页。
 
 ### 项目、标签与评测配置
 
