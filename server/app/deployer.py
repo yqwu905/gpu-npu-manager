@@ -21,6 +21,7 @@ from sqlalchemy import select
 from .agent_client import AgentClient, AgentError
 from .config import Settings
 from .models import Server
+from .tunnels import ssh_args
 
 log = logging.getLogger(__name__)
 
@@ -235,6 +236,7 @@ class Deployer:
                 server.ssh_port or 22,
                 list(server.allow_roots or []),
                 server.deploy_version,
+                server.ssh_tunnel is not False,
             )
 
     async def _run(self, server_id: int) -> None:
@@ -259,21 +261,17 @@ class Deployer:
         target = await asyncio.to_thread(self._target, server_id)
         if target is None:
             return
-        host, ssh_host, port, ssh_user, ssh_port, allow_roots, version = target
+        host, ssh_host, port, ssh_user, ssh_port, allow_roots, version, tunnel = target
         self._update(server_id, deploy_status="running", deploy_started_at=datetime.now(timezone.utc))
 
         env = {"GNM_AGENT_TOKEN": self.settings.agent_token, "GNM_AGENT_PORT": str(port)}
         if allow_roots:
             env["GNM_AGENT_ALLOW_ROOTS"] = ":".join(allow_roots)
+        if tunnel:
+            # 只经 SSH 转发访问，不对外监听
+            env["GNM_AGENT_HOST"] = "127.0.0.1"
         script = install_script(self.settings.agent_package_dir, env)
-        command = shlex.split(self.settings.ssh_command) + [
-            "-o", "BatchMode=yes",
-            "-o", "StrictHostKeyChecking=accept-new",
-            "-o", "ConnectTimeout=10",
-            "-p", str(ssh_port),
-            f"{ssh_user}@{ssh_host}",
-            "bash -s",
-        ]
+        command = ssh_args(self.settings, ssh_user, ssh_host, ssh_port) + ["bash -s"]
         try:
             proc = await asyncio.create_subprocess_exec(
                 *command,
@@ -302,7 +300,7 @@ class Deployer:
             return
 
         # 等新 Agent 启动并确认版本
-        seen = None
+        seen, last_error = None, None
         loop = asyncio.get_running_loop()
         deadline = loop.time() + HEALTH_WAIT
         while loop.time() < deadline:
@@ -310,12 +308,13 @@ class Deployer:
                 seen = (await self.agent.health(host, port)).get("agent_version")
                 if seen == version:
                     break
-            except AgentError:
-                pass
+            except AgentError as exc:
+                last_error = str(exc)
             await asyncio.sleep(1)
         if seen != version:
             if seen is None:
-                error = f"安装完成，但 {HEALTH_WAIT} 秒内连不上 Agent 端口 {port}，请检查防火墙和 ~/.gnm-agent/agent.log"
+                where = "通过 SSH 转发" if tunnel else f"直接（请检查防火墙是否放通端口 {port}）"
+                error = f"安装完成，但 {HEALTH_WAIT} 秒内{where}连不上 Agent：{last_error}；可查看服务器上的 ~/.gnm-agent/agent.log"
             else:
                 error = (
                     f"端口 {port} 上运行的 Agent 版本是 {seen}，不是刚安装的 {version}，"

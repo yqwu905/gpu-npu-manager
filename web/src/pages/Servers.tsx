@@ -349,6 +349,7 @@ function AgentPanel({ s, onChanged }: { s: Server; onChanged: (s: Server | null)
     ['当前版本', <span className="mono">{s.agent_version ?? '未连通'}</span>],
     ['中心服务自带版本', <span className="mono">{pkg.data?.version ?? '-'}</span>],
     ['管理方式', s.managed ? <span>中心服务通过 SSH 安装和升级（<span className="mono">{s.ssh_user}@{s.ssh_host ?? s.host}:{s.ssh_port}</span>）</span> : '手动安装'],
+    ['访问方式', s.managed && s.ssh_tunnel ? 'SSH 端口转发（Agent 只监听本机）' : `直接连接 ${s.host}:${s.port}`],
     ['允许读取的目录', <span className="mono">{s.allow_roots.length ? s.allow_roots.join('、') : '登录用户家目录'}</span>],
   ]
   return (
@@ -450,6 +451,7 @@ function AttrForm({ s, groups, onSaved, onDeleted }: { s: Server; groups: string
   const [sshUser, setSshUser] = useState(s.ssh_user ?? '')
   const [sshPort, setSshPort] = useState(String(s.ssh_port))
   const [sshHost, setSshHost] = useState(s.ssh_host ?? '')
+  const [tunnel, setTunnel] = useState(s.ssh_tunnel)
   const [port, setPort] = useState(String(s.port))
   const [roots, setRoots] = useState(s.allow_roots.join('\n'))
   const [err, setErr] = useState<string | null>(null)
@@ -465,7 +467,7 @@ function AttrForm({ s, groups, onSaved, onDeleted }: { s: Server; groups: string
     try {
       onSaved(await serversApi.update(s.id, {
         name, group: group || null, owner: owner || null, tags, note: note || null, schedulable,
-        ssh_user: sshUser.trim() || null, ssh_port: Number(sshPort) || 22, ssh_host: sshHost.trim() || null, port: Number(port) || 9100,
+        ssh_user: sshUser.trim() || null, ssh_port: Number(sshPort) || 22, ssh_host: sshHost.trim() || null, ssh_tunnel: tunnel, port: Number(port) || 9100,
         allow_roots: roots.split('\n').map((r) => r.trim()).filter(Boolean),
       }))
       setOk(true)
@@ -512,6 +514,13 @@ function AttrForm({ s, groups, onSaved, onDeleted }: { s: Server; groups: string
         <label className="field" style={{ flex: '1 1 0' }}><span className="lbl">Agent 端口</span><input className="inp mono" value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" /></label>
       </div>
       <label className="field"><span className="lbl">SSH 连接目标（可填 ~/.ssh/config 中的别名，不填用地址）</span><input className="inp mono" value={sshHost} onChange={(e) => setSshHost(e.target.value)} placeholder={s.host} /></label>
+      <div className="row" style={{ gap: 12 }}>
+        <div className="grow">
+          <div style={{ fontWeight: 500 }}>通过 SSH 转发访问 Agent</div>
+          <div className="lbl">需要填写 SSH 用户。开启时 Agent 只监听本机，关闭后需要重新安装 Agent 才能直接连接</div>
+        </div>
+        <Switch on={tunnel} onChange={setTunnel} label="通过 SSH 转发访问 Agent" />
+      </div>
       <label className="field"><span className="lbl">允许读取的目录（每行一个，修改后需重新安装 Agent 生效）</span><textarea className="inp mono" rows={2} value={roots} onChange={(e) => setRoots(e.target.value)} placeholder="登录用户家目录" /></label>
       <div className="row" style={{ gap: 12 }}>
         <div className="grow">
@@ -566,6 +575,7 @@ function AddServerDialog({ groups, onClose, onAdded }: { groups: string[]; onClo
   const [group, setGroup] = useState('')
   const [owner, setOwner] = useState('')
   const [deploy, setDeploy] = useState(true)
+  const [tunnel, setTunnel] = useState(true)
   const [err, setErr] = useState<string | null>(null)
   const [failed, setFailed] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
@@ -588,6 +598,7 @@ function AddServerDialog({ groups, onClose, onAdded }: { groups: string[]; onClo
       group: group || null,
       owner: owner || null,
       allow_roots: roots.split('\n').map((r) => r.trim()).filter(Boolean),
+      ssh_tunnel: tunnel,
     }
     const items = mode === 'one'
       ? [{ ...common, host: host.trim(), name: name.trim() || null, ssh_user: sshUser.trim() || null, ssh_port: Number(sshPort) || 22 }]
@@ -682,6 +693,9 @@ function AddServerDialog({ groups, onClose, onAdded }: { groups: string[]; onClo
             </label>
             <label className="row" style={{ gap: 6, fontSize: 13 }}>
               <input type="checkbox" checked={deploy} onChange={(e) => setDeploy(e.target.checked)} />添加后立即安装 Agent
+            </label>
+            <label className="row" style={{ gap: 6, fontSize: 13 }}>
+              <input type="checkbox" checked={tunnel} onChange={(e) => setTunnel(e.target.checked)} />通过 SSH 转发访问 Agent（防火墙不需要放通 Agent 端口）
             </label>
             {p && !p.ssh_available && <div className="notice err">中心主机上找不到 ssh 命令，无法自动安装。</div>}
             <div className="notice">

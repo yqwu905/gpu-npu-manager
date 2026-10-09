@@ -4243,6 +4243,12 @@
             "title": "Ssh Host",
             "description": "SSH 连接目标，可以是中心主机 ~/.ssh/config 中的别名，为空时用 host"
           },
+          "ssh_tunnel": {
+            "type": "boolean",
+            "title": "Ssh Tunnel",
+            "description": "通过 SSH 端口转发访问 Agent，服务器防火墙不需要放通 Agent 端口（需填写 ssh_user）",
+            "default": true
+          },
           "allow_roots": {
             "items": {
               "type": "string"
@@ -4423,6 +4429,12 @@
             ],
             "title": "Ssh Host",
             "description": "SSH 连接目标，可以是中心主机 ~/.ssh/config 中的别名，为空时用 host"
+          },
+          "ssh_tunnel": {
+            "type": "boolean",
+            "title": "Ssh Tunnel",
+            "description": "通过 SSH 端口转发访问 Agent，服务器防火墙不需要放通 Agent 端口（需填写 ssh_user）",
+            "default": true
           },
           "allow_roots": {
             "items": {
@@ -4726,6 +4738,17 @@
               }
             ],
             "title": "Ssh Host"
+          },
+          "ssh_tunnel": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ssh Tunnel"
           },
           "allow_roots": {
             "anyOf": [

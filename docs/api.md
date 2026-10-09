@@ -65,7 +65,7 @@
 {
   "id": 1, "name": "npu-01", "host": "10.0.0.11", "port": 9100,
   "group": "cv", "owner": "alice", "tags": ["910B", "lab1"], "note": null, "schedulable": true,
-  "ssh_user": "alice", "ssh_port": 22, "ssh_host": null, "allow_roots": ["/data/results"],
+  "ssh_user": "alice", "ssh_port": 22, "ssh_host": null, "ssh_tunnel": true, "allow_roots": ["/data/results"],
   "accelerator": "npu", "status": "online", "hostname": "node11", "agent_version": "0.1.0+aabf8f791b",
   "agent_outdated": false, "managed": true,
   "deploy": {"status": "succeeded", "action": "install", "version": "0.1.0+aabf8f791b", "error": null,
@@ -96,6 +96,7 @@
 
 - `status`：连续 3 次拉取失败判定为 `offline`，`last_error` 给出最后一次错误原因。
 - `ssh_host`：SSH 连接目标，可以是中心主机 `~/.ssh/config` 中的 Host 别名（沿用其中的密钥、跳板机等设置）；为 `null` 时用 `host`。
+- `ssh_tunnel`：默认 `true`，中心服务通过 SSH 端口转发访问 Agent（Agent 只监听服务器本机，防火墙不需要放通 Agent 端口）；只对填写了 `ssh_user` 的服务器生效。改为 `false` 后需要重新安装 Agent，让它对外监听。转发建立失败时 `last_error` 以“SSH 转发失败”开头。
 - `managed`：填写了 `ssh_user`，由中心服务通过 SSH 安装和升级 Agent；任务以该用户运行。
 - `agent_version`：Agent 版本，`+` 后面是 agent.py 和 evaluate.py 的内容摘要；`agent_outdated` 表示与中心服务自带的版本不一致。
 - `deploy`：最近一次安装或升级，从未通过 SSH 部署过时为 `null`。`status` 为 `pending` / `running` / `succeeded` / `failed`，`action` 为 `install` / `upgrade`，失败原因在 `error`。

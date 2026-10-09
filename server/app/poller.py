@@ -9,6 +9,7 @@ from sqlalchemy import delete, select
 
 from .config import Settings
 from .models import Device, DeviceMetric, Server
+from .tunnels import TunnelError
 from .timeutil import as_utc
 
 log = logging.getLogger(__name__)
@@ -104,12 +105,16 @@ class Poller:
         self.transport = transport
         self._task: asyncio.Task | None = None
         self._last_prune: datetime | None = None
+        # SSH 端口转发（Tunnels），为 None 时直接连接 Agent
+        self.tunnels = None
 
     def _client(self) -> httpx.AsyncClient:
         headers = {"X-Agent-Token": self.settings.agent_token} if self.settings.agent_token else {}
         return httpx.AsyncClient(timeout=self.settings.agent_timeout, headers=headers, transport=self.transport)
 
     async def _fetch(self, client: httpx.AsyncClient, host: str, port: int) -> dict:
+        if self.tunnels is not None:
+            host, port = await self.tunnels.endpoint(host, port)
         resp = await client.get(f"http://{host}:{port}/v1/status")
         resp.raise_for_status()
         return resp.json()
@@ -138,13 +143,18 @@ class Poller:
         targets = await asyncio.to_thread(self._targets, server_ids)
         if not targets:
             return
+        if self.tunnels is not None:
+            await asyncio.to_thread(self.tunnels.refresh)
         async with self._client() as client:
             results = await asyncio.gather(
                 *(self._fetch(client, t.host, t.port) for t in targets), return_exceptions=True
             )
         for target, result in zip(targets, results):
             if isinstance(result, Exception):
-                error = f"{type(result).__name__}: {result}" if str(result) else type(result).__name__
+                if isinstance(result, TunnelError):
+                    error = str(result)
+                else:
+                    error = f"{type(result).__name__}: {result}" if str(result) else type(result).__name__
                 await asyncio.to_thread(self._save, target.id, None, error)
             else:
                 await asyncio.to_thread(self._save, target.id, result, None)

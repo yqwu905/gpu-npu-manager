@@ -5,6 +5,7 @@ import json
 import httpx
 
 from .config import Settings
+from .tunnels import TunnelError
 
 
 class AgentError(Exception):
@@ -23,12 +24,19 @@ class AgentClient:
     def __init__(self, settings: Settings, transport: httpx.AsyncBaseTransport | None = None):
         self.settings = settings
         self.transport = transport
+        # SSH 端口转发（Tunnels），为 None 时直接连接 Agent
+        self.tunnels = None
 
     def _client(self) -> httpx.AsyncClient:
         headers = {"X-Agent-Token": self.settings.agent_token} if self.settings.agent_token else {}
         return httpx.AsyncClient(timeout=self.settings.agent_timeout, headers=headers, transport=self.transport)
 
     async def _send(self, method: str, host: str, port: int, path: str, **kwargs) -> httpx.Response:
+        if self.tunnels is not None:
+            try:
+                host, port = await self.tunnels.endpoint(host, port)
+            except TunnelError as exc:
+                raise AgentError(str(exc)) from exc
         try:
             async with self._client() as client:
                 resp = await client.request(method, f"http://{host}:{port}{path}", **kwargs)

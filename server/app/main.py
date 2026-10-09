@@ -10,6 +10,7 @@ from .poller import Poller
 from .evaluations import EvaluationCollector
 from .routers import jobs, overview, results, servers
 from .scheduler import Scheduler
+from .tunnels import Tunnels
 from .web import mount_web
 
 
@@ -23,6 +24,9 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
     scheduler = Scheduler(settings, session_factory, transport=transport)
     collector = EvaluationCollector(settings, session_factory, scheduler.agent)
     scheduler.after_round.append(collector.run_once)
+    tunnels = Tunnels(settings, session_factory)
+    poller.tunnels = tunnels
+    scheduler.agent.tunnels = tunnels
     deployer = Deployer(settings, session_factory, scheduler.agent, poller)
     deployer.recover()
     scheduler.after_round.append(deployer.auto_upgrade)
@@ -35,6 +39,7 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
         yield
         await scheduler.stop()
         await poller.stop()
+        await tunnels.stop()
 
     app = FastAPI(
         title="GPU/NPU 服务器管理平台",

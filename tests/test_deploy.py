@@ -56,10 +56,12 @@ def wait_deploys(client):
     client.portal.call(client.app.state.deployer.wait)
 
 
-def test_install_and_upgrade(tmp_path):
+def test_install_and_upgrade(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
-    ssh = fake_ssh(tmp_path, f'exec env HOME="{home}" bash -s')
+    monkeypatch.setenv("FAKE_SSH_HOME", str(home))
+    monkeypatch.setenv("FAKE_SSH_LOG", str(tmp_path / "ssh.log"))
+    ssh = str(ROOT / "tests" / "fake_ssh.py")
     port = free_port()
     try:
         with make_client(tmp_path, ssh_command=ssh) as client:
@@ -92,17 +94,24 @@ def test_install_and_upgrade(tmp_path):
             assert not server["agent_outdated"] and server["managed"]
             env = (home / ".gnm-agent" / "bin" / "agent.env").read_text()
             assert "GNM_AGENT_TOKEN=secret" in env and f"GNM_AGENT_ALLOW_ROOTS={tmp_path}" in env
+            # 默认经 SSH 转发访问，Agent 只监听本机
+            assert "GNM_AGENT_HOST=127.0.0.1" in env and server["ssh_tunnel"]
+            assert f"-N -o ExitOnForwardFailure=yes" in (tmp_path / "ssh.log").read_text()
             assert "已安装" in client.get(f"/api/servers/{sid}/deploy").json()["log"]
             first_pid = (home / ".gnm-agent" / "agent.pid").read_text()
 
             # 升级：只有托管且版本落后或未安装的服务器会被选中
             resp = client.post("/api/servers/deploy", json={"outdated": True})
             assert resp.json() == []
+            # 改为直接连接后重新安装，Agent 对外监听
+            client.patch(f"/api/servers/{sid}", json={"ssh_tunnel": False})
             resp = client.post(f"/api/servers/{sid}/deploy")
             assert resp.status_code == 200 and resp.json()["deploy"]["action"] == "upgrade"
             assert client.post(f"/api/servers/{sid}/deploy").status_code == 409  # 正在安装中
             wait_deploys(client)
-            assert client.get(f"/api/servers/{sid}").json()["deploy"]["status"] == "succeeded"
+            server = client.get(f"/api/servers/{sid}").json()
+            assert server["deploy"]["status"] == "succeeded" and server["status"] == "online"
+            assert "GNM_AGENT_HOST" not in (home / ".gnm-agent" / "bin" / "agent.env").read_text()
             assert (home / ".gnm-agent" / "agent.pid").read_text() != first_pid
             assert client.post(f"/api/servers/{body['created'][1]['id']}/deploy").status_code == 409
     finally:
@@ -199,3 +208,14 @@ def test_ssh_target_uses_alias(tmp_path):
         wait_deploys(client)
     args = (tmp_path / "args").read_text().split()
     assert args[-3:] == ["alice@gpu-05", "bash", "-s"] and "2222" in args
+
+
+def test_tunnel_failure_reported(tmp_path):
+    ssh = fake_ssh(tmp_path, 'echo "alice@h: Permission denied (publickey)." >&2; exit 255')
+    with make_client(tmp_path, ssh_command=ssh) as client:
+        sid = client.post("/api/servers", json={"host": "h", "ssh_user": "alice"}, params={"deploy": False}).json()["id"]
+        server = client.post(f"/api/servers/{sid}/refresh").json()
+        assert server["last_error"] == "SSH 转发失败：alice@h: Permission denied (publickey)."
+        # 关闭转发后直接连接
+        client.patch(f"/api/servers/{sid}", json={"ssh_tunnel": False})
+        assert "SSH" not in client.post(f"/api/servers/{sid}/refresh").json()["last_error"]
