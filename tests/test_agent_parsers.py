@@ -76,3 +76,15 @@ def test_npu_health_detail(tmp_path):
     assert devices[0]["health_detail"] is None
     assert (tmp_path / "args").read_text().splitlines() == ["info", "info -t health -i 7 -c 0"]
     assert agent.parse_npu_health("Health Status : OK\nError Code : NA\nError Information : NA\n") is None
+
+
+def test_warning_card_still_idle():
+    """一般告警（Warning）的卡空闲时仍可调度，Alarm、Critical 等不可用。"""
+    from app.config import Settings
+    from app.models import Device, Server
+    from app.views import device_is_idle
+
+    server = Server(id=1, status="online")
+    for health, idle in [("OK", True), ("Warning", True), ("Alarm", False), ("Critical", False), ("UNKNOWN", False)]:
+        device = Device(index=0, vendor="ascend", health=health, processes=[], memory_used_mb=3100)
+        assert device_is_idle(server, device, Settings()) is idle, health

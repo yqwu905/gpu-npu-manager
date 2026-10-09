@@ -24,12 +24,16 @@ def occupied_devices(session) -> Occupied:
     return occupied
 
 
+# 这些健康状态不影响使用：Warning 是一般告警（npu-smi 中 Alarm、Critical 才是重要和紧急告警）
+USABLE_HEALTH = {"OK", "WARNING"}
+
+
 def device_is_idle(server: Server, device: Device, settings: Settings, occupied: Occupied | None = None) -> bool:
     if occupied and (server.id, device.index) in occupied:
         return False
     if server.status != "online":
         return False
-    if device.health and device.health.upper() != "OK":
+    if device.health and device.health.upper() not in USABLE_HEALTH:
         return False
     if device.processes:
         return False
