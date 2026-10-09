@@ -14,8 +14,11 @@
     xxx.jpg	[{"transcription": "文字", "points": [[x, y], ...], "difficult": false}, ...]
   按图片文件名（去掉扩展名）与样本配对；忽略 difficult 为 true 或内容为 ### 的框，
   其余框按阅读顺序（从上到下分行，行内从左到右）拼成参考文本：同一行用空格连接，不同行用换行连接。
-  样本没有识别文本（text）但有预测图时，用 PaddleOCR（pip 包 paddleocr，2.x 和 3.x 均可）对预测图做
-  检测和识别，识别出的框按同样的规则拼成文本；结果另存为输出目录下的 ocr_results.txt（标注文件格式）。
+  样本没有识别文本（text）但有预测图时，用 PaddleOCR（pip 包 paddleocr，2.x 和 3.x 均可）识别：
+  - 参考值来自标注文件时，只识别标注框内的文字（标注不一定覆盖图中所有文字）：按框裁图（四点框透视变换拉正），
+    只做识别不做检测，逐框与 transcription 比较。标注坐标对应参考图，预测图尺寸不同（如 LQ）时按比例缩放；
+  - 其他情况对整图做检测和识别，识别出的框按同样的规则拼成文本后与参考文本比较。
+  识别结果另存为输出目录下的 ocr_results.txt（标注文件格式）。
 
   LQ 目录（--lq）按同样的规则与样本配对，配对到的 LQ 图片路径写入逐样本结果，供页面并排展示；
   加 --lq-baseline 时把 LQ 图片当作预测结果，用同样的参考值和指标再评测一次，作为基线。
@@ -29,7 +32,8 @@
 
 指标：
   图像  psnr、ssim（--device 不是 cpu 且装了 torch 时在 GPU/NPU 上算，否则用 numpy）、lpips（需要 torch 和 lpips 包）
-  文本  ocr_a（整句完全一致的比例）、cer（字符错误率）、ned（1-NED，归一化编辑距离相似度）
+  文本  ocr_a（完全一致的区域占比）、cer（总编辑距离 / 参考总字符数）、ned（各区域 1-NED 的平均）
+        区域：标注文件的每个框；按整段文本比较的样本整个算一个区域
 """
 import argparse
 import json
@@ -252,6 +256,76 @@ class PaddleOcr(object):
         ]
 
 
+def crop_text_region(img, points):
+    """按标注框从 BGR 图中裁出文字区域，与 PaddleOCR 的做法一致：四点框做透视变换拉正，
+    其他多边形取最小外接矩形；裁出的图高宽比不小于 1.5 时（竖排文字）旋转 90 度。"""
+    import cv2
+    import numpy as np
+
+    pts = np.array(points, dtype=np.float32).reshape(-1, 2)
+    if len(pts) != 4:
+        rect = cv2.boxPoints(cv2.minAreaRect(pts))
+        rect = sorted(rect.tolist(), key=lambda p: p[0])
+        left = sorted(rect[:2], key=lambda p: p[1])
+        right = sorted(rect[2:], key=lambda p: p[1])
+        pts = np.array([left[0], right[0], right[1], left[1]], dtype=np.float32)
+    width = int(max(np.linalg.norm(pts[0] - pts[1]), np.linalg.norm(pts[2] - pts[3])))
+    height = int(max(np.linalg.norm(pts[0] - pts[3]), np.linalg.norm(pts[1] - pts[2])))
+    width, height = max(width, 1), max(height, 1)
+    target = np.float32([[0, 0], [width, 0], [width, height], [0, height]])
+    matrix = cv2.getPerspectiveTransform(pts, target)
+    crop = cv2.warpPerspective(img, matrix, (width, height), borderMode=cv2.BORDER_REPLICATE, flags=cv2.INTER_CUBIC)
+    if crop.shape[0] * 1.0 / crop.shape[1] >= 1.5:
+        crop = np.rot90(crop)
+    return np.ascontiguousarray(crop)
+
+
+class TextRecognizer(object):
+    """只做文字识别（不做检测），输入裁好的 BGR 文字区域图列表，返回识别文本列表。
+
+    兼容 paddleocr 3.x（TextRecognition.predict，结果字段 rec_text）和
+    2.x（PaddleOCR.ocr(..., det=False, cls=False)，结果为 [[(文本, 置信度), ...]]）。
+    """
+
+    def __init__(self, device):
+        import paddleocr  # 需要 pip install paddleocr 及对应的 paddlepaddle
+        import cv2  # noqa: F401  裁图需要 opencv，paddleocr 的依赖里已包含
+
+        if hasattr(paddleocr, "TextRecognition"):
+            self.v3 = True
+            self.engine = paddleocr.TextRecognition(device=device.replace("cuda", "gpu"))
+        else:
+            self.v3 = False
+            self.engine = paddleocr.PaddleOCR(
+                lang="ch", use_angle_cls=False, show_log=False,
+                use_gpu=device.startswith("cuda"), use_npu=device.startswith("npu"),
+            )
+
+    def __call__(self, crops):
+        if not crops:
+            return []
+        if self.v3:
+            return [str(r["rec_text"]) for r in self.engine.predict(crops)]
+        return [str(text) for text, _score in self.engine.ocr(crops, det=False, cls=False)[0]]
+
+
+def recognize_regions(recognizer, image_path, boxes, ref_image_path=None):
+    """逐个标注框裁图识别。标注坐标对应参考图（GT）；预测图（如 LQ）尺寸不同时按比例缩放坐标。"""
+    import cv2
+    import numpy as np
+    from PIL import Image
+
+    with Image.open(image_path) as img:
+        img = cv2.cvtColor(np.asarray(img.convert("RGB")), cv2.COLOR_RGB2BGR)
+    sx = sy = 1.0
+    if ref_image_path and os.path.isfile(ref_image_path):
+        with Image.open(ref_image_path) as ref:
+            rw, rh = ref.size
+        sx, sy = img.shape[1] / float(rw), img.shape[0] / float(rh)
+    crops = [crop_text_region(img, [[p[0] * sx, p[1] * sy] for p in box["points"]]) for box in boxes]
+    return recognizer(crops)
+
+
 # ---------------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------------
@@ -389,7 +463,14 @@ def load_ocr_labels(path):
                 raise SystemExit("{} 第 {} 行不是“图片文件名<Tab>JSON 数组”格式".format(path, number))
             name, boxes = parsed
             sample_id = os.path.splitext(os.path.basename(name))[0]
-            labels[sample_id] = {"id": sample_id, "ref_text": boxes_to_text(boxes)}
+            # 参与评测的框：忽略 difficult 和 ###，没有坐标的框无法裁图，也忽略
+            regions = [
+                {"transcription": str(b.get("transcription")), "points": b.get("points")}
+                for b in boxes
+                if not b.get("difficult") and b.get("transcription") is not None
+                and str(b.get("transcription")) not in IGNORED_TRANSCRIPTIONS and len(b.get("points") or []) >= 3
+            ]
+            labels[sample_id] = {"id": sample_id, "ref_text": boxes_to_text(boxes), "ref_boxes": regions}
     return labels
 
 
@@ -490,6 +571,11 @@ def evaluate(predictions_path, output_dir, metrics, reference_path=None, device=
     counts = {m: 0 for m in metrics}
     cer_distance = 0
     cer_length = 0
+    # 文字指标按区域汇总：标注文件中的每个框是一个区域，样本自带识别文本时整个样本算一个区域
+    text_regions = 0
+    text_exact = 0
+    text_ned = 0.0
+    recognizer = None
     skipped = []
     per_sample = []
     started = last_log = time.time()
@@ -550,7 +636,45 @@ def evaluate(predictions_path, output_dir, metrics, reference_path=None, device=
                 skipped.append({"id": sample_id, "error": "图像指标: {}".format(exc)})
 
         wants_text = any(m in metrics for m in TEXT_METRICS)
-        needs_ocr = wants_text and merged.get("ref_text") is not None and merged.get("text") is None and merged.get("image")
+        regions = merged.get("ref_boxes")
+        by_region = wants_text and regions is not None and merged.get("text") is None and merged.get("image")
+        needs_ocr = (wants_text and not by_region and merged.get("ref_text") is not None
+                     and merged.get("text") is None and merged.get("image"))
+        if by_region:
+            # 标注文件只标了部分文字：只识别标注框内的文字，逐框与标注比较
+            if recognizer is None and ocr_error is None:
+                try:
+                    log("初始化 PaddleOCR 文字识别（第一次运行会下载模型到 ~/.paddlex 或 ~/.paddleocr，离线服务器需提前放好）")
+                    recognizer = TextRecognizer(device)
+                except Exception as exc:
+                    ocr_error = "OCR 初始化失败（需要在服务器上安装 paddleocr 和 paddlepaddle）: {}".format(exc)
+            if recognizer is not None and regions:
+                try:
+                    texts = recognize_regions(recognizer, resolve(base_dir, merged["image"]), regions,
+                                              merged.get("ref_image") and resolve(base_dir, merged["ref_image"]))
+                    distance = length = exact = 0
+                    ned_sum = 0.0
+                    for box, text in zip(regions, texts):
+                        d, n, same, ned = text_scores(text, box["transcription"])
+                        distance, length, exact, ned_sum = distance + d, length + n, exact + same, ned_sum + ned
+                    cer_distance += distance
+                    cer_length += length
+                    text_regions += len(regions)
+                    text_exact += exact
+                    text_ned += ned_sum
+                    if "ocr_a" in metrics:
+                        row["ocr_a"] = exact / float(len(regions))
+                    if "cer" in metrics:
+                        row["cer"] = distance / float(length) if length else float(distance > 0)
+                    if "ned" in metrics:
+                        row["ned"] = ned_sum / len(regions)
+                    recognized = [{"transcription": t, "points": b["points"], "difficult": False}
+                                  for b, t in zip(regions, texts)]
+                    row["ocr_text"] = boxes_to_text(recognized)
+                    row["ocr_regions"] = [{"ref": b["transcription"], "pred": t} for b, t in zip(regions, texts)]
+                    ocr_lines.append(merged["image"] + "\t" + json.dumps(recognized, ensure_ascii=False))
+                except Exception as exc:
+                    skipped.append({"id": sample_id, "error": "OCR: {}".format(exc)})
         if needs_ocr:
             # 没有现成的识别文本，对预测图做 OCR
             if ocr is None and ocr_error is None:
@@ -568,10 +692,14 @@ def evaluate(predictions_path, output_dir, metrics, reference_path=None, device=
                 except Exception as exc:
                     skipped.append({"id": sample_id, "error": "OCR: {}".format(exc)})
         # OCR 不可用或失败的样本不计入文字指标
-        if wants_text and merged.get("ref_text") is not None and not (needs_ocr and merged.get("text") is None):
+        if (wants_text and not by_region and merged.get("ref_text") is not None
+                and not (needs_ocr and merged.get("text") is None)):
             distance, ref_len, exact, ned = text_scores(str(merged.get("text") or ""), str(merged["ref_text"]))
             cer_distance += distance
             cer_length += ref_len
+            text_regions += 1
+            text_exact += exact
+            text_ned += ned
             if "ocr_a" in metrics:
                 row["ocr_a"] = 1.0 if exact else 0.0
             if "cer" in metrics:
@@ -599,6 +727,12 @@ def evaluate(predictions_path, output_dir, metrics, reference_path=None, device=
         if metric == "cer":
             # 语料级 CER：总编辑距离 / 参考文本总字符数
             summary[metric] = cer_distance / float(cer_length) if cer_length else None
+        elif metric == "ocr_a":
+            # 完全识别正确的区域占比
+            summary[metric] = text_exact / float(text_regions) if text_regions else None
+        elif metric == "ned":
+            # 各区域 1-NED 的平均
+            summary[metric] = text_ned / text_regions if text_regions else None
         else:
             summary[metric] = sums[metric] / counts[metric] if counts[metric] else None
         if counts[metric] == 0 and metric not in errors:
@@ -623,6 +757,7 @@ def evaluate(predictions_path, output_dir, metrics, reference_path=None, device=
         "num_samples": len(records),
         "skipped": skipped[:100],
         "num_skipped": len(skipped),
+        "num_text_regions": text_regions,
     }
     result.update(extra or {})
     # 最后写 metrics.json，它的存在代表评测完成

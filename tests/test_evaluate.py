@@ -151,23 +151,19 @@ class FakePaddleOCR2:
 
 @pytest.mark.parametrize("engine", [FakePaddleOCR3, FakePaddleOCR2])
 def test_ocr_on_predicted_images(tmp_path, monkeypatch, engine):
-    """样本只有预测图时，用 PaddleOCR 识别后再和标注比较。"""
+    """参考文本不是来自标注文件、样本只有预测图时，用 PaddleOCR 对整图检测和识别后再比较。"""
     import types
 
     monkeypatch.setitem(sys.modules, "paddleocr", types.SimpleNamespace(PaddleOCR=engine))
     for name in ("a", "b"):
         Image.fromarray(np.zeros((8, 8, 3), np.uint8)).save(tmp_path / f"{name}.png")
-    label = tmp_path / "Label.txt"
-    label.write_text(
-        'a.jpg\t[{"transcription": "P38", "points": [[300, 12], [400, 12], [400, 52], [300, 52]]},'
-        ' {"transcription": "标题", "points": [[10, 300], [90, 300], [90, 340], [10, 340]]}]\n'
-        'b.jpg\t[{"transcription": "HEFU", "points": [[0, 0], [100, 0], [100, 40], [0, 40]]}]\n'
-    )
+    preds = [{"id": "a", "image": "a.png", "ref_text": "P38\n标题"}, {"id": "b", "image": "b.png", "ref_text": "HEFU"}]
+    (tmp_path / "predictions.jsonl").write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in preds) + "\n")
     out = tmp_path / "eval"
     logs = []
-    result = evaluate.evaluate(str(tmp_path), str(out), ["ocr_a", "cer"], reference_path=str(label),
+    result = evaluate.evaluate(str(tmp_path / "predictions.jsonl"), str(out), ["ocr_a", "cer"],
                                device="cuda:0", log=logs.append)
-    assert logs[0] == "共 3 个样本，指标 ocr_a,cer，设备 cuda:0" and logs[-1].startswith("已处理 3/3")
+    assert logs[0] == "共 2 个样本，指标 ocr_a,cer，设备 cuda:0" and logs[-1].startswith("已处理 2/2")
     if engine is FakePaddleOCR3:
         # 评测不需要文档方向分类和去扭曲，3.x 默认开启
         assert FakePaddleOCR3.last_kwargs["device"] == "gpu:0"
@@ -176,6 +172,84 @@ def test_ocr_on_predicted_images(tmp_path, monkeypatch, engine):
     assert result["counts"] == {"ocr_a": 2, "cer": 2} and result["metrics"]["ocr_a"] == pytest.approx(0.5)
     ocr_lines = (out / "ocr_results.txt").read_text().splitlines()
     assert ocr_lines[0].startswith("a.png\t") and json.loads(ocr_lines[0].split("\t")[1])[1]["transcription"] == "标题"
+
+
+def fake_text(crop):
+    """按裁出区域的平均亮度给出识别文本，用来确认裁的是标注框。"""
+    mean = float(np.mean(crop))
+    return "P38" if mean < 85 else "HEFV" if mean < 160 else "标题"
+
+
+class FakeTextRecognition3:
+    """模拟 paddleocr 3.x 的 TextRecognition：predict 输入裁好的图列表，结果含 rec_text。"""
+
+    def __init__(self, **kwargs):
+        FakeTextRecognition3.last_kwargs = kwargs
+
+    def predict(self, crops):
+        return [{"rec_text": fake_text(c), "rec_score": 0.9} for c in crops]
+
+
+class FakeRecognizer2:
+    """模拟 paddleocr 2.x：ocr(图列表, det=False, cls=False) 返回 [[(文本, 置信度), ...]]。"""
+
+    def __init__(self, **kwargs):
+        pass
+
+    def ocr(self, crops, det=True, cls=True):
+        assert det is False and cls is False and isinstance(crops, list)
+        return [[(fake_text(c), 0.9) for c in crops]]
+
+
+@pytest.mark.parametrize("version", [3, 2])
+def test_ocr_label_regions(tmp_path, monkeypatch, version):
+    """参考值来自标注文件时只识别标注框，逐框比较；预测图尺寸与参考图不同时按比例缩放坐标。"""
+    import types
+
+    pytest.importorskip("cv2")
+    module = (types.SimpleNamespace(TextRecognition=FakeTextRecognition3, PaddleOCR=FakePaddleOCR3) if version == 3
+              else types.SimpleNamespace(PaddleOCR=FakeRecognizer2))
+    monkeypatch.setitem(sys.modules, "paddleocr", module)
+
+    def draw(scale, blocks):
+        img = np.zeros((100 * scale, 200 * scale, 3), np.uint8)
+        for (x0, y0, x1, y1), value in blocks:
+            img[y0 * scale:y1 * scale, x0 * scale:x1 * scale] = value
+        return img
+
+    # a：两个标注框，另有一块没有标注的文字区域（不应参与评测）；b：一个框，识别结果与标注差一个字
+    layouts = {"a": [((10, 10, 90, 40), 50), ((110, 50, 190, 90), 230), ((10, 60, 90, 90), 120)],
+               "b": [((20, 20, 120, 60), 120)]}
+    for folder, scale in (("pred", 2), ("gt", 2), ("lq", 1)):
+        (tmp_path / folder).mkdir()
+        for name, blocks in layouts.items():
+            Image.fromarray(draw(scale, blocks)).save(tmp_path / folder / f"{name}.png")
+
+    def box(text, x0, y0, x1, y1, **kw):
+        return {"transcription": text, "points": [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], **kw}
+
+    # 标注坐标对应 GT（2 倍大小）
+    label = tmp_path / "Label.txt"
+    label.write_text("\n".join([
+        "a.jpg\t" + json.dumps([box("P38", 24, 24, 176, 76), box("标题", 224, 104, 376, 176),
+                                box("看不清", 20, 120, 180, 180, difficult=True)], ensure_ascii=False),
+        "b.jpg\t" + json.dumps([box("HEFU", 44, 44, 236, 116)]),
+    ]) + "\n")
+    refs = [str(tmp_path / "gt"), str(label)]
+    expected = {"ocr_a": 2 / 3, "cer": 1 / 9, "ned": (1 + 1 + 0.75) / 3}
+    for folder in ("pred", "lq"):
+        out = tmp_path / f"eval-{folder}"
+        result = evaluate.evaluate(str(tmp_path / folder), str(out), ["ocr_a", "cer", "ned"], reference_path=refs,
+                                   device="cuda:0", log=lambda *_: None)
+        assert result["num_text_regions"] == 3, folder
+        for metric, value in expected.items():
+            assert result["metrics"][metric] == pytest.approx(value), (folder, metric)
+        rows = {r["id"]: r for r in map(json.loads, (out / "per_sample.jsonl").read_text().splitlines())}
+        assert rows["a"]["ocr_a"] == 1.0 and rows["a"]["ocr_text"] == "P38\n标题"
+        assert rows["b"]["ocr_regions"] == [{"ref": "HEFU", "pred": "HEFV"}] and rows["b"]["cer"] == pytest.approx(0.25)
+        assert (out / "ocr_results.txt").is_file()
+    if version == 3:
+        assert FakeTextRecognition3.last_kwargs == {"device": "gpu:0"}
 
 
 def test_ocr_unavailable(tmp_path, monkeypatch):
