@@ -208,6 +208,45 @@ def test_evaluate_on_eval_server(env):
     assert cmp["items"][0]["results"][str(results[1]["id"])]["lq_image"] == str(data / "lq" / "0.png")
 
 
+def test_lq_baseline_recompute_and_delete(env):
+    client, tmp_path, data, ids = env
+    config = client.post("/api/eval-configs", json={
+        "name": "sr-local", "metrics": ["psnr", "ocr_a"], "gt_dir": str(data / "gt"),
+        "label_file": str(data / "label.txt"), "lq_dir": str(data / "lq"),
+    }).json()
+    result = client.post("/api/results", json={"server_id": ids["srv"], "path": str(data / "model-a")}).json()
+
+    def evaluate(**kw):
+        ev = client.post("/api/evaluations", json={"result_set_id": result["id"], "config_id": config["id"], **kw}).json()
+        run_until(client, lambda: client.get(f"/api/evaluations/{ev['id']}").json()["status"] in ("succeeded", "failed"))
+        return client.get(f"/api/evaluations/{ev['id']}").json()
+
+    first = evaluate()
+    # 测试环境没有 paddleocr，LQ 基线的 ocr_a 没算出来
+    assert first["compute_lq"] is True and first["lq_values"]["ocr_a"] is None
+    only_psnr = evaluate(metrics=["psnr"])
+    assert only_psnr["compute_lq"] is False and only_psnr["lq_source_id"] == first["id"]
+    # 需要的指标在已有基线里没算出来时重新计算
+    again = evaluate()
+    assert again["compute_lq"] is True and again["lq_source_id"] == again["id"]
+    forced = evaluate(metrics=["psnr"], recompute_lq=True)
+    assert forced["compute_lq"] is True
+
+    # 删除基线来源后，引用它的评测改用同配置的其他基线
+    assert client.delete(f"/api/evaluations/{first['id']}").status_code == 204
+    assert client.get(f"/api/evaluations/{first['id']}").status_code == 404
+    moved = client.get(f"/api/evaluations/{only_psnr['id']}").json()
+    assert moved["lq_source_id"] == again["id"] and moved["lq_values"] == again["lq_values"]
+    for ev in (again, forced, only_psnr):
+        assert client.delete(f"/api/evaluations/{ev['id']}").status_code == 204
+    assert client.get("/api/evaluations").json() == []
+    assert client.get(f"/api/results/{result['id']}").json()["metrics"] == {}
+
+    pending = client.post("/api/evaluations", json={"result_set_id": result["id"], "metrics": ["psnr"]}).json()
+    assert client.delete(f"/api/evaluations/{pending['id']}").status_code == 409
+    assert client.delete("/api/evaluations/9999").status_code == 404
+
+
 def test_copy_needs_ssh_on_result_server(env):
     client, tmp_path, data, ids = env
     result = client.post("/api/results", json={"server_id": ids["no-ssh"], "path": str(data / "model-a")}).json()

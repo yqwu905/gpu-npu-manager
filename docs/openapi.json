@@ -2170,6 +2170,39 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "results"
+        ],
+        "summary": "删除评测记录",
+        "operationId": "delete_evaluation_api_evaluations__evaluation_id__delete",
+        "parameters": [
+          {
+            "name": "evaluation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Evaluation Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/compare/metrics": {
@@ -3758,6 +3791,12 @@
             ],
             "title": "Python",
             "description": "运行评测脚本的 python 解释器，如 /path/to/.venv/bin/python；为空时用中心服务的 GNM_EVAL_PYTHON（默认 python3）"
+          },
+          "recompute_lq": {
+            "type": "boolean",
+            "title": "Recompute Lq",
+            "description": "不复用同配置已有的 LQ 基线，本次重新计算（有 LQ 目录时有效）",
+            "default": false
           },
           "priority": {
             "type": "integer",

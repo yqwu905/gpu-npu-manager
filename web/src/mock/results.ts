@@ -170,6 +170,9 @@ export const mockResults = {
     configs = configs.map((c) => (c.id === id ? { ...c, ...body, updated_at: ago(0) } : c))
     return configs.find((c) => c.id === id)!
   },
+  deleteEvaluation(id: number) {
+    evaluations = evaluations.filter((e) => e.id !== id).map((e) => (e.lq_source_id === id ? { ...e, lq_source_id: null, lq_values: null } : e))
+  },
   deleteConfig(id: number) {
     configs = configs.filter((c) => c.id !== id)
   },

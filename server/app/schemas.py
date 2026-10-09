@@ -410,6 +410,7 @@ class EvaluationCreate(BaseModel):
     server_path: str | None = None
     num_devices: int | None = Field(default=None, ge=0, le=8, description="LPIPS 可用 1 张卡加速，其他指标用 0 即可；不填时取配置中的值或 0")
     python: str | None = Field(default=None, max_length=1024, description="运行评测脚本的 python 解释器，如 /path/to/.venv/bin/python；为空时用中心服务的 GNM_EVAL_PYTHON（默认 python3）")
+    recompute_lq: bool = Field(default=False, description="不复用同配置已有的 LQ 基线，本次重新计算（有 LQ 目录时有效）")
     priority: int = Field(default=0, ge=-100, le=100)
     submitter: str | None = None
 

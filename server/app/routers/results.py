@@ -419,7 +419,7 @@ async def create_evaluation(
         base = evaluation.data_path or result.path
         evaluation.output_dir = posixpath.join(base, "eval", str(evaluation.id))
         if evaluation.lq_dir:
-            source = find_lq_baseline(session, evaluation)
+            source = None if body.recompute_lq else find_lq_baseline(session, evaluation)
             evaluation.lq_source_id = source.id if source is not None else None
             evaluation.compute_lq = source is None
         if not copy:
@@ -452,6 +452,24 @@ def list_evaluations(
 @router.get("/evaluations/{evaluation_id}", response_model=EvaluationOut, summary="评测详情")
 def get_evaluation(evaluation_id: int, session: Session = Depends(get_session)):
     return evaluation_out(_load_evaluation(session, evaluation_id))
+
+
+@router.delete("/evaluations/{evaluation_id}", status_code=204, summary="删除评测记录")
+def delete_evaluation(evaluation_id: int, session: Session = Depends(get_session)):
+    evaluation = _load_evaluation(session, evaluation_id)
+    if evaluation.status == "copying":
+        raise HTTPException(409, "正在拷贝数据，请等拷贝结束后再删除")
+    if evaluation.status in ("pending", "running"):
+        raise HTTPException(409, "评测还在进行，请先在任务队列中取消评测任务")
+    users = list(session.scalars(select(Evaluation).where(Evaluation.lq_source_id == evaluation_id)))
+    session.delete(evaluation)
+    session.flush()
+    # 引用它的 LQ 基线的评测改用同配置的其他基线，没有时不再显示 LQ 基线
+    for user in users:
+        source = find_lq_baseline(session, user)
+        user.lq_source_id = source.id if source is not None else None
+    session.commit()
+    return Response(status_code=204)
 
 
 # ----------------------------------------------------------------------------

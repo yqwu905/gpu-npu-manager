@@ -96,7 +96,10 @@ def latest_lq_metrics(result: ResultSet) -> dict[str, float]:
 
 
 def find_lq_baseline(session, evaluation: Evaluation) -> Evaluation | None:
-    """同一配置下 LQ、参考数据和评测服务器都相同、指标覆盖本次评测的已有基线（进行中或已成功）。"""
+    """同一配置下 LQ、参考数据和评测服务器都相同、指标覆盖本次评测的已有基线（进行中或已成功）。
+
+    已成功的基线中本次要的指标有没算出来的（例如当时环境没装 paddle，OCR 失败），不复用，本次重新计算。
+    """
     if evaluation.config_id is None or not evaluation.lq_dir:
         return None
     candidates = session.scalars(
@@ -115,7 +118,10 @@ def find_lq_baseline(session, evaluation: Evaluation) -> Evaluation | None:
             for field in ("lq_dir", "gt_dir", "label_file", "reference")
         ) and eval_server(candidate).id == eval_server(evaluation).id
         if same and set(evaluation.metrics) <= set(candidate.metrics):
-            if candidate.status != "succeeded" or candidate.lq_values is not None:
+            if candidate.status != "succeeded":
+                return candidate
+            values = candidate.lq_values or {}
+            if all(values.get(m) is not None for m in evaluation.metrics):
                 return candidate
     return None
 
