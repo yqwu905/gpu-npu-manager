@@ -1630,6 +1630,39 @@
             }
           },
           {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "只看该项目的结果集；0 表示未归档到任何项目的",
+              "title": "Project Id"
+            },
+            "description": "只看该项目的结果集；0 表示未归档到任何项目的"
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "标签，可多个，需全部包含",
+              "default": [],
+              "title": "Tag"
+            },
+            "description": "标签，可多个，需全部包含"
+          },
+          {
             "name": "q",
             "in": "query",
             "required": false,
@@ -1669,6 +1702,31 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/results/tags": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "结果集用到的所有标签",
+        "operationId": "result_tags_api_results_tags_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TagCount"
+                  },
+                  "type": "array",
+                  "title": "Response Result Tags Api Results Tags Get"
                 }
               }
             }
@@ -1721,7 +1779,7 @@
         "tags": [
           "results"
         ],
-        "summary": "修改名称或备注",
+        "summary": "修改名称、备注、所属项目或标签",
         "operationId": "update_result_api_results__result_id__patch",
         "parameters": [
           {
@@ -1893,6 +1951,24 @@
               "title": "Path"
             },
             "description": "相对结果集目录的路径，或服务器上的绝对路径"
+          },
+          {
+            "name": "evaluation_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "从该评测的评测服务器读取（样本的 media 字段给出）",
+              "title": "Evaluation Id"
+            },
+            "description": "从该评测的评测服务器读取（样本的 media 字段给出）"
           }
         ],
         "responses": {
@@ -2197,6 +2273,304 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "项目列表",
+        "operationId": "list_projects_api_projects_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProjectOut"
+                  },
+                  "type": "array",
+                  "title": "Response List Projects Api Projects Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "results"
+        ],
+        "summary": "创建项目",
+        "operationId": "create_project_api_projects_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}": {
+      "patch": {
+        "tags": [
+          "results"
+        ],
+        "summary": "修改项目",
+        "operationId": "update_project_api_projects__project_id__patch",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "results"
+        ],
+        "summary": "删除项目（其中的结果集改为未归档，不会删除）",
+        "operationId": "delete_project_api_projects__project_id__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/eval-configs": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "评测配置列表",
+        "operationId": "list_configs_api_eval_configs_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/EvalConfigOut"
+                  },
+                  "type": "array",
+                  "title": "Response List Configs Api Eval Configs Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "results"
+        ],
+        "summary": "保存评测配置",
+        "operationId": "create_config_api_eval_configs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalConfigCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalConfigOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/eval-configs/{config_id}": {
+      "patch": {
+        "tags": [
+          "results"
+        ],
+        "summary": "修改评测配置（不影响已有评测）",
+        "operationId": "update_config_api_eval_configs__config_id__patch",
+        "parameters": [
+          {
+            "name": "config_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Config Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalConfigUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalConfigOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "results"
+        ],
+        "summary": "删除评测配置（已有评测保留）",
+        "operationId": "delete_config_api_eval_configs__config_id__delete",
+        "parameters": [
+          {
+            "name": "config_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Config Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
           },
           "422": {
             "description": "Validation Error",
@@ -2805,12 +3179,8 @@
         ],
         "title": "DiskOut"
       },
-      "EvaluationCreate": {
+      "EvalConfigCreate": {
         "properties": {
-          "result_set_id": {
-            "type": "integer",
-            "title": "Result Set Id"
-          },
           "metrics": {
             "items": {
               "type": "string",
@@ -2825,7 +3195,403 @@
             },
             "type": "array",
             "minItems": 1,
+            "title": "Metrics",
+            "description": "评测哪些指标"
+          },
+          "label_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label File",
+            "description": "文字指标的 PaddleOCR 格式标注文件"
+          },
+          "gt_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gt Dir",
+            "description": "GT 目录，按文件名与样本配对"
+          },
+          "lq_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lq Dir",
+            "description": "LQ 目录，按文件名与样本配对；页面上与结果并排展示，并计算一次 LQ 基线指标"
+          },
+          "server_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server Id",
+            "description": "评测服务器；指定后把结果目录拷贝到 server_path 下再评测，为空时在结果所在服务器上评测"
+          },
+          "server_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server Path",
+            "description": "评测服务器上存放拷贝数据的目录，指定评测服务器时必填"
+          },
+          "num_devices": {
+            "type": "integer",
+            "maximum": 8.0,
+            "minimum": 0.0,
+            "title": "Num Devices",
+            "description": "LPIPS、OCR 可用 1 张卡加速",
+            "default": 0
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "metrics",
+          "name"
+        ],
+        "title": "EvalConfigCreate"
+      },
+      "EvalConfigOut": {
+        "properties": {
+          "metrics": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "psnr",
+                "ssim",
+                "lpips",
+                "ocr_a",
+                "cer",
+                "ned"
+              ]
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Metrics",
+            "description": "评测哪些指标"
+          },
+          "label_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label File",
+            "description": "文字指标的 PaddleOCR 格式标注文件"
+          },
+          "gt_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gt Dir",
+            "description": "GT 目录，按文件名与样本配对"
+          },
+          "lq_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lq Dir",
+            "description": "LQ 目录，按文件名与样本配对；页面上与结果并排展示，并计算一次 LQ 基线指标"
+          },
+          "server_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server Id",
+            "description": "评测服务器；指定后把结果目录拷贝到 server_path 下再评测，为空时在结果所在服务器上评测"
+          },
+          "server_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server Path",
+            "description": "评测服务器上存放拷贝数据的目录，指定评测服务器时必填"
+          },
+          "num_devices": {
+            "type": "integer",
+            "maximum": 8.0,
+            "minimum": 0.0,
+            "title": "Num Devices",
+            "description": "LPIPS、OCR 可用 1 张卡加速",
+            "default": 0
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "server_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server Name"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "metrics",
+          "id",
+          "name",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "EvalConfigOut"
+      },
+      "EvalConfigUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "metrics": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "psnr",
+                    "ssim",
+                    "lpips",
+                    "ocr_a",
+                    "cer",
+                    "ned"
+                  ]
+                },
+                "type": "array",
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Metrics"
+          },
+          "label_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label File"
+          },
+          "gt_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gt Dir"
+          },
+          "lq_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lq Dir"
+          },
+          "server_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server Id"
+          },
+          "server_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server Path"
+          },
+          "num_devices": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 8.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Num Devices"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "title": "EvalConfigUpdate",
+        "description": "只提交需要修改的字段。"
+      },
+      "EvaluationCreate": {
+        "properties": {
+          "result_set_id": {
+            "type": "integer",
+            "title": "Result Set Id"
+          },
+          "config_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Id",
+            "description": "评测配置；请求中另外给出的字段覆盖配置中的值"
+          },
+          "metrics": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "psnr",
+                    "ssim",
+                    "lpips",
+                    "ocr_a",
+                    "cer",
+                    "ned"
+                  ]
+                },
+                "type": "array",
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metrics",
+            "description": "不用配置时必填"
           },
           "reference": {
             "anyOf": [
@@ -2839,13 +3605,75 @@
             "title": "Reference",
             "description": "可选，服务器上的参考目录（按文件名配对图片和 .txt）、参考值 jsonl（按 id 合并 ref_image / ref_text），或 PaddleOCR 格式的文字标注文件"
           },
+          "label_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label File"
+          },
+          "gt_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gt Dir"
+          },
+          "lq_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lq Dir"
+          },
+          "server_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server Id",
+            "description": "评测服务器，见评测配置"
+          },
+          "server_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server Path"
+          },
           "num_devices": {
-            "type": "integer",
-            "maximum": 8.0,
-            "minimum": 0.0,
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 8.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Num Devices",
-            "description": "LPIPS 可用 1 张卡加速，其他指标用 0 即可",
-            "default": 0
+            "description": "LPIPS 可用 1 张卡加速，其他指标用 0 即可；不填时取配置中的值或 0"
           },
           "priority": {
             "type": "integer",
@@ -2868,8 +3696,7 @@
         },
         "type": "object",
         "required": [
-          "result_set_id",
-          "metrics"
+          "result_set_id"
         ],
         "title": "EvaluationCreate"
       },
@@ -2905,6 +3732,79 @@
             ],
             "title": "Reference"
           },
+          "config_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Id"
+          },
+          "config_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Name"
+          },
+          "label_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label File"
+          },
+          "gt_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gt Dir"
+          },
+          "lq_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lq Dir"
+          },
+          "server_id": {
+            "type": "integer",
+            "title": "Server Id",
+            "description": "运行评测的服务器"
+          },
+          "server_name": {
+            "type": "string",
+            "title": "Server Name"
+          },
+          "data_path": {
+            "type": "string",
+            "title": "Data Path",
+            "description": "评测服务器上的结果目录（拷贝过去的，或结果集原目录）"
+          },
+          "output_dir": {
+            "type": "string",
+            "title": "Output Dir"
+          },
           "job_id": {
             "anyOf": [
               {
@@ -2930,6 +3830,7 @@
           "status": {
             "type": "string",
             "enum": [
+              "copying",
               "pending",
               "running",
               "succeeded",
@@ -3001,6 +3902,74 @@
             "title": "Num Skipped",
             "description": "读取失败或尺寸不一致而跳过的样本数"
           },
+          "compute_lq": {
+            "type": "boolean",
+            "title": "Compute Lq",
+            "description": "本次评测是否计算 LQ 基线指标",
+            "default": false
+          },
+          "lq_source_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lq Source Id",
+            "description": "LQ 基线指标来自哪次评测（同配置的第一次评测）"
+          },
+          "lq_values": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lq Values",
+            "description": "LQ 基线指标"
+          },
+          "lq_counts": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lq Counts"
+          },
+          "lq_errors": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lq Errors"
+          },
           "error": {
             "anyOf": [
               {
@@ -3036,6 +4005,10 @@
           "result_set_id",
           "result_set_name",
           "metrics",
+          "server_id",
+          "server_name",
+          "data_path",
+          "output_dir",
           "status",
           "created_at"
         ],
@@ -3698,6 +4671,18 @@
             "type": "object",
             "title": "Values",
             "description": "结果集 ID -> 指标名 -> 值"
+          },
+          "lq_values": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "number"
+              },
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Lq Values",
+            "description": "结果集 ID -> LQ 基线指标，没有时缺省",
+            "default": {}
           }
         },
         "type": "object",
@@ -3881,6 +4866,103 @@
         "type": "object",
         "title": "ProcessOut"
       },
+      "ProjectCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "ProjectCreate"
+      },
+      "ProjectOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "result_count": {
+            "type": "integer",
+            "title": "Result Count",
+            "description": "归档到该项目的结果集数量"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "result_count",
+          "created_at"
+        ],
+        "title": "ProjectOut"
+      },
+      "ProjectUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "title": "ProjectUpdate"
+      },
       "ResultSetCreate": {
         "properties": {
           "server_id": {
@@ -3928,6 +5010,27 @@
             ],
             "title": "Job Id",
             "description": "产生该结果的任务"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id",
+            "description": "归档到的项目"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags",
+            "description": "标签，可多个",
+            "default": []
           }
         },
         "type": "object",
@@ -3998,6 +5101,36 @@
             ],
             "title": "Job Id"
           },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "project_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Name"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tags",
+            "default": []
+          },
           "metrics": {
             "additionalProperties": {
               "type": "number"
@@ -4005,6 +5138,15 @@
             "type": "object",
             "title": "Metrics",
             "description": "每个指标最近一次成功评测的值",
+            "default": {}
+          },
+          "lq_metrics": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Lq Metrics",
+            "description": "最近一次带 LQ 基线的评测对应的 LQ 指标",
             "default": {}
           },
           "evaluating": {
@@ -4056,6 +5198,32 @@
               }
             ],
             "title": "Note"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id",
+            "description": "归档到的项目，传 null 表示移出项目"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
           }
         },
         "type": "object",
@@ -4146,7 +5314,7 @@
             },
             "type": "array",
             "title": "Items",
-            "description": "predictions.jsonl 的原始记录（没有它时为扫描得到的 id、image、text），另加 metrics 字段（该样本的逐样本指标）；图片字段为相对路径，用 /api/results/{id}/file?path= 读取"
+            "description": "predictions.jsonl 的原始记录（没有它时为扫描得到的 id、image、text），另加 metrics 字段（该样本的逐样本指标）；图片字段为相对路径，用 /api/results/{id}/file?path= 读取。评测配对到的 ref_image、ref_text、lq_image、ocr_text 在记录没有该字段时补上，这些图片在评测服务器上，读取时另加 evaluation_id（见 media 字段：字段名 -> 评测 ID）"
           }
         },
         "type": "object",
@@ -4863,6 +6031,24 @@
           "hosts"
         ],
         "title": "SshConfigHosts"
+      },
+      "TagCount": {
+        "properties": {
+          "tag": {
+            "type": "string",
+            "title": "Tag"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tag",
+          "count"
+        ],
+        "title": "TagCount"
       },
       "ValidationError": {
         "properties": {

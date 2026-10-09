@@ -73,6 +73,7 @@ export const JOB_LOOK: Record<JobStatus, { name: string; bg: string; fg: string 
 }
 
 export const EVAL_LOOK: Record<EvaluationStatus, { name: string; bg: string; fg: string }> = {
+  copying: { name: '拷贝中', bg: '#FDF0D9', fg: '#8A4A06' },
   pending: { name: '排队中', bg: '#ECEDEB', fg: '#3A4048' },
   running: { name: '评测中', bg: '#DCE7FC', fg: '#123F99' },
   succeeded: { name: '成功', bg: '#E3F2E8', fg: '#1B5E3A' },
