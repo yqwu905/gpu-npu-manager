@@ -65,8 +65,21 @@ export default function ResultsPage() {
   const tags = usePoll(() => resultsApi.tags(), [], 30_000)
   const evaluators = usePoll(() => resultsApi.evaluators(), [], 0)
   const evals = usePoll(() => resultsApi.evaluations(), [], 10_000)
+  const [evalErr, setEvalErr] = useState<string | null>(null)
   const mock = useMock('results')
   const reloadAll = () => { sets.reload(); projects.reload(); tags.reload() }
+  const removeEval = async (e: Evaluation) => {
+    const lqNote = e.compute_lq ? '其他评测如果复用了它的 LQ 基线，会改用同配置的其他基线，没有时之后的评测会重新计算。' : ''
+    if (!window.confirm(`删除 ${e.result_set_name} 的评测记录 #${e.id}？结果集的指标会改用其他评测的值。${lqNote}服务器上的评测输出文件保留。`)) return
+    setEvalErr(null)
+    try {
+      await resultsApi.deleteEvaluation(e.id)
+      evals.reload()
+      sets.reload()
+    } catch (err) {
+      setEvalErr(errText(err))
+    }
+  }
 
   const list = sets.data ?? []
   const evs = evaluators.data ?? []
@@ -199,7 +212,7 @@ export default function ResultsPage() {
                 ? e.metrics.map((k) => `${metricLabel(evs, k)} ${fmtMetric(e.values?.[k])}`).join(' · ')
                 : `${e.metrics.map((k) => metricLabel(evs, k)).join(' · ')} · ${e.status === 'copying' ? `正在拷贝到 ${e.server_name}:${e.data_path}` : e.status === 'pending' ? '等待运行' : progressText(e)}`)}
               {e.lq_values && <span> · LQ 基线{e.compute_lq ? '' : '（复用）'} {Object.entries(e.lq_values).map(([k, v]) => `${metricLabel(evs, k)} ${fmtMetric(v)}`).join(' · ')}</span>}
-              {!e.lq_values && e.lq_dir && e.status !== 'failed' && <span> · {e.compute_lq ? '本次同时计算 LQ 基线' : 'LQ 基线复用同配置的第一次评测'}</span>}
+              {!e.lq_values && e.lq_dir && e.status !== 'failed' && <span> · {e.compute_lq ? '本次同时计算 LQ 基线' : e.lq_source_id === null ? 'LQ 基线所在的评测已删除' : 'LQ 基线复用同配置的已有评测'}</span>}
               {e.errors && Object.keys(e.errors).length > 0 && <span style={{ color: '#8A4A06' }}> · {Object.entries(e.errors).map(([k, v]) => `${metricLabel(evs, k)}：${v}`).join('；')}</span>}
               {!!e.num_skipped && <span style={{ color: '#8A4A06' }}> · 跳过 {e.num_skipped} 个样本</span>}
             </span>
@@ -209,9 +222,13 @@ export default function ResultsPage() {
               </div>
             )}
             <span className="lbl">{relTime(e.created_at)}</span>
+            {(e.status === 'succeeded' || e.status === 'failed') && (
+              <button type="button" className="btn sm danger" onClick={() => removeEval(e)}>删除</button>
+            )}
           </div>
         ))}
         {(evals.data ?? []).length === 0 && <div className="list-row lbl">暂无评测</div>}
+        <ErrorNote error={evalErr} />
       </section>
 
       {evalFor && <EvalDialog r={evalFor} evaluators={evs} onClose={() => setEvalFor(null)}
@@ -360,6 +377,7 @@ function EvalDialog({ r, evaluators, onClose, onDone }: { r: ResultSet; evaluato
   const [reference, setReference] = useState('')
   const [devicesInput, setDevicesInput] = useState<string | null>(null)
   const [pythonInput, setPythonInput] = useState<string | null>(null)
+  const [recomputeLq, setRecomputeLq] = useState(false)
   const [priority, setPriority] = useState('0')
   const [submitter, setSubmitter] = useState(() => localStorage.getItem('gnm.submitter') ?? '')
   const [err, setErr] = useState<string | null>(null)
@@ -381,7 +399,8 @@ function EvalDialog({ r, evaluators, onClose, onDone }: { r: ResultSet; evaluato
       localStorage.setItem('gnm.submitter', submitter)
       await resultsApi.evaluate({
         result_set_id: r.id, config_id: config?.id ?? null, metrics: chosen, reference: reference.trim() || null,
-        num_devices: Number(devices) || 0, python: pythonInput === null ? undefined : pythonInput.trim() || null, priority: Math.max(-100, Math.min(100, Number(priority) || 0)), submitter: submitter.trim() || null,
+        num_devices: Number(devices) || 0, python: pythonInput === null ? undefined : pythonInput.trim() || null,
+        recompute_lq: config?.lq_dir ? recomputeLq : undefined, priority: Math.max(-100, Math.min(100, Number(priority) || 0)), submitter: submitter.trim() || null,
       })
       onDone()
     } catch (e) {
@@ -408,7 +427,12 @@ function EvalDialog({ r, evaluators, onClose, onDone }: { r: ResultSet; evaluato
             <span>LQ 目录：<span className="mono">{config.lq_dir ?? '-'}</span></span>
             <span>评测服务器：{config.server_name ? <span className="mono">{config.server_name}:{config.server_path}</span> : '结果所在服务器'}</span>
             {copies && <span>提交后先把结果目录拷贝到 <span className="mono">{config.server_path}/result_{r.id}</span>，再在 {config.server_name} 上评测。</span>}
-            {config.lq_dir && <span>LQ 基线指标每个配置只在第一次评测时计算，之后的评测直接复用。</span>}
+            {config.lq_dir && <span>LQ 基线指标每个配置只在第一次评测时计算，之后的评测直接复用；已有基线里本次要的指标没算出来时会重新计算。</span>}
+            {config.lq_dir && (
+              <span className="row" style={{ gap: 8, marginTop: 4 }}>
+                <Switch on={recomputeLq} onChange={setRecomputeLq} label="重新计算 LQ 基线" />重新计算 LQ 基线（不复用已有的）
+              </span>
+            )}
           </div>
         )}
         <MetricPicker evaluators={evaluators} chosen={chosen} onToggle={toggle} />

@@ -36,6 +36,8 @@ export const resultsApi = {
   evaluators: () => fb(() => request<Evaluator[]>('GET', '/evaluators'), () => mockResults.evaluators()),
   evaluations: (resultSetId?: number) =>
     fb(() => request<Evaluation[]>('GET', '/evaluations', { query: { result_set_id: resultSetId } }), () => mockResults.evaluations(resultSetId)),
+  /** 只能删除已结束（成功或失败）的评测 */
+  deleteEvaluation: (id: number) => fb(() => request<void>('DELETE', `/evaluations/${id}`), () => mockResults.deleteEvaluation(id)),
   evaluate: (body: EvaluationCreate) => fb(() => request<Evaluation>('POST', '/evaluations', { body }), () => mockResults.evaluate(body)),
   compareMetrics: (ids: number[]) =>
     fb(() => request<CompareMetrics>('GET', '/compare/metrics', { query: { ids: ids.map(String) } }), () => mockResults.compareMetrics(ids)),

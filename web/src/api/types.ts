@@ -423,6 +423,8 @@ export interface EvaluationCreate {
   server_path?: string | null
   num_devices?: number
   python?: string | null
+  /** 不复用同配置已有的 LQ 基线，本次重新计算 */
+  recompute_lq?: boolean
   priority?: number
   submitter?: string | null
 }

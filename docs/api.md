@@ -415,6 +415,10 @@
 
 `progress` 只在 `running` 时有值，例如 `{"stage": "main", "done": 120, "total": 500, "elapsed": 63.2}`。数据来自评测脚本每 10 秒写一次的输出目录下 `progress.json`，中心服务每轮调度时读取。`stage` 为 `lq` 时表示正在计算 LQ 基线，之后还会评测结果集。
 
+`recompute_lq` 默认 false。有 LQ 目录时，同配置下已有的 LQ 基线会被复用；但如果已成功的基线里本次要的指标有没算出来的（例如当时没装 paddle，OCR 失败），这次会重新计算。传 `true` 时不复用，强制重新计算。
+
+`DELETE /api/evaluations/{id}` 删除评测记录，返回 204。拷贝中、排队或运行中的评测返回 409，需先在任务队列中取消评测任务。结果集的指标会改用其他评测的值。引用它的 LQ 基线的评测改用同配置的其他基线，没有时不再显示 LQ 基线，之后的评测会重新计算。服务器上的输出文件不删除。
+
 `GET /api/evaluations?result_set_id=7` 列出某个结果集的评测历史，`GET /api/evaluations/{id}` 返回单个。
 
 ### GET /api/compare/metrics?ids=7&ids=8&ids=9
