@@ -23,6 +23,7 @@
 输出（--output 目录）：
   - metrics.json      整体指标、每个指标的有效样本数和错误；计算了 LQ 基线时另有 lq 字段
   - per_sample.jsonl  逐样本指标，顺序与输入样本相同，另含配对到的 ref_image、ref_text、lq_image 和 OCR 识别文本
+  - progress.json     评测过程中的进度 {"stage": "lq" 或 "main", "done", "total", "elapsed"}，每 10 秒更新
   - ocr_results.txt   做了 OCR 时的识别结果，每行“图片路径<Tab>文本框 JSON 数组”
   - lq/               LQ 基线的评测输出（结构同上）
 
@@ -445,8 +446,21 @@ def log_flush(message):
     sys.stdout.flush()
 
 
+def write_progress(path, stage, done, total, elapsed):
+    """写进度文件供中心服务读取，先写临时文件再改名，避免读到写了一半的内容。"""
+    if not path:
+        return
+    directory = os.path.dirname(path)
+    if directory and not os.path.isdir(directory):
+        os.makedirs(directory)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"stage": stage, "done": done, "total": total, "elapsed": round(elapsed, 1)}, f)
+    os.replace(tmp, path)
+
+
 def evaluate(predictions_path, output_dir, metrics, reference_path=None, device="cpu", log=log_flush,
-             lq_path=None, extra=None):
+             lq_path=None, extra=None, progress_path=None, stage="main"):
     records, base_dir = load_records(predictions_path)
     if isinstance(reference_path, str):
         reference_path = [reference_path]
@@ -479,6 +493,7 @@ def evaluate(predictions_path, output_dir, metrics, reference_path=None, device=
     skipped = []
     per_sample = []
     started = last_log = time.time()
+    write_progress(progress_path, stage, 0, len(records), 0)
 
     def merge(index, record):
         sample_id = record.get("id", index)
@@ -575,6 +590,7 @@ def evaluate(predictions_path, output_dir, metrics, reference_path=None, device=
         if now - last_log >= PROGRESS_SECONDS or index + 1 == len(records):
             last_log = now
             log("已处理 {}/{}，用时 {:.0f} 秒".format(index + 1, len(records), now - started))
+            write_progress(progress_path, stage, index + 1, len(records), now - started)
     if pool is not None:
         pool.shutdown()
 
@@ -636,11 +652,14 @@ def main():
     if unknown:
         raise SystemExit("未知指标: {}".format(", ".join(unknown)))
     extra = None
+    progress_path = os.path.join(args.output, "progress.json")
     if args.lq and args.lq_baseline:
         log_flush("计算 LQ 基线指标")
-        lq = evaluate(args.lq, os.path.join(args.output, "lq"), metrics, args.reference, args.device)
+        lq = evaluate(args.lq, os.path.join(args.output, "lq"), metrics, args.reference, args.device,
+                      progress_path=progress_path, stage="lq")
         extra = {"lq": {k: lq[k] for k in ("metrics", "counts", "errors", "num_samples", "num_skipped")}}
-    result = evaluate(args.predictions, args.output, metrics, args.reference, args.device, lq_path=args.lq, extra=extra)
+    result = evaluate(args.predictions, args.output, metrics, args.reference, args.device, lq_path=args.lq, extra=extra,
+                      progress_path=progress_path)
     print(json.dumps(result["metrics"], ensure_ascii=False))
     if result["errors"]:
         print("部分指标未能计算: {}".format(json.dumps(result["errors"], ensure_ascii=False)), file=sys.stderr)

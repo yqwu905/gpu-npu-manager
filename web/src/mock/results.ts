@@ -65,7 +65,8 @@ function ev(id: number, setId: number, metrics: string[], job_id: number, status
     id, result_set_id: setId, result_set_name: s.name, metrics, reference: null, config_id: null, config_name: null, label_file: null, gt_dir: null, lq_dir: null,
     server_id: s.server_id, server_name: s.server_name, data_path: s.path, output_dir: `${s.path}/eval/${id}`, compute_lq: false, lq_source_id: null,
     lq_values: null, lq_counts: null, lq_errors: null, job_id, job_status: status === 'pending' ? 'queued' : status,
-    status, values, counts: null, errors: null, num_skipped: values ? 0 : null, error, created_at: ago(min), finished_at: status === 'succeeded' || status === 'failed' ? ago(min - 3) : null,
+    status, values, counts: null, errors: null, num_skipped: values ? 0 : null, error,
+    progress: status === 'running' ? { stage: 'main', done: 312, total: 800, elapsed: 245 } : null, created_at: ago(min), finished_at: status === 'succeeded' || status === 'failed' ? ago(min - 3) : null,
   }
 }
 

@@ -1314,6 +1314,39 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "删除已结束的任务",
+        "operationId": "delete_job_api_jobs__job_id__delete",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/jobs/{job_id}/cancel": {
@@ -3902,6 +3935,17 @@
             "title": "Num Skipped",
             "description": "读取失败或尺寸不一致而跳过的样本数"
           },
+          "progress": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvaluationProgress"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "运行中的进度，评测脚本每 10 秒更新一次"
+          },
           "compute_lq": {
             "type": "boolean",
             "title": "Compute Lq",
@@ -4013,6 +4057,40 @@
           "created_at"
         ],
         "title": "EvaluationOut"
+      },
+      "EvaluationProgress": {
+        "properties": {
+          "stage": {
+            "type": "string",
+            "enum": [
+              "lq",
+              "main"
+            ],
+            "title": "Stage",
+            "description": "lq：正在计算 LQ 基线；main：正在评测结果集"
+          },
+          "done": {
+            "type": "integer",
+            "title": "Done"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "elapsed": {
+            "type": "number",
+            "title": "Elapsed",
+            "description": "当前阶段已用秒数"
+          }
+        },
+        "type": "object",
+        "required": [
+          "stage",
+          "done",
+          "total",
+          "elapsed"
+        ],
+        "title": "EvaluationProgress"
       },
       "EvaluatorOut": {
         "properties": {

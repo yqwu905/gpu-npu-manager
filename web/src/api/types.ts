@@ -400,6 +400,8 @@ export interface Evaluation {
   counts: Record<string, number> | null
   errors: Record<string, string> | null
   num_skipped: number | null
+  /** 运行中的进度，评测脚本每 10 秒更新一次；stage 为 lq 时在算 LQ 基线 */
+  progress: { stage: 'lq' | 'main'; done: number; total: number; elapsed: number } | null
   error: string | null
   created_at: string
   finished_at: string | null
