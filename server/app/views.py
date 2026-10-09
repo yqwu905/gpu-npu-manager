@@ -101,6 +101,7 @@ def server_out(
         ssh_user=server.ssh_user,
         ssh_port=server.ssh_port or 22,
         ssh_host=server.ssh_host,
+        ssh_tunnel=server.ssh_tunnel is not False,
         allow_roots=server.allow_roots or [],
         host_info=server.host_info,
         last_seen_at=as_utc(server.last_seen_at),

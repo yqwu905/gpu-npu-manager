@@ -17,6 +17,8 @@ def test_serves_built_frontend(tmp_path):
         assert client.get("/ui/").text.startswith("<!doctype html>")
         resp = client.get("/", follow_redirects=False)
         assert resp.status_code == 307 and resp.headers["location"] == "/ui/"
+        resp = client.get("/favicon.ico", follow_redirects=False)
+        assert resp.headers["location"] == "/ui/favicon.svg"
         # 前端挂载不影响接口
         assert client.get("/api/servers").json() == []
 

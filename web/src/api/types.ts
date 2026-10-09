@@ -61,6 +61,7 @@ export interface Server {
   ssh_user: string | null
   ssh_port: number
   ssh_host: string | null
+  ssh_tunnel: boolean
   allow_roots: string[]
   host_info: HostInfo | null
   last_seen_at: string | null
@@ -103,6 +104,7 @@ export interface ServerCreate {
   ssh_user?: string | null
   ssh_port?: number
   ssh_host?: string | null
+  ssh_tunnel?: boolean
   allow_roots?: string[]
   group?: string | null
   owner?: string | null

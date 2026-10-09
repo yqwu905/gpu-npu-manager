@@ -60,6 +60,9 @@ class ServerBase(BaseModel):
     ssh_host: str | None = Field(
         default=None, max_length=255, description="SSH 连接目标，可以是中心主机 ~/.ssh/config 中的别名，为空时用 host"
     )
+    ssh_tunnel: bool = Field(
+        default=True, description="通过 SSH 端口转发访问 Agent，服务器防火墙不需要放通 Agent 端口（需填写 ssh_user）"
+    )
     allow_roots: list[str] = Field(default=[], description="允许读取的目录（推理结果所在位置），为空时为登录用户家目录")
     group: str | None = Field(default=None, description="运行组，任务调度按运行组选择服务器")
     owner: str | None = Field(default=None, description="使用人")
@@ -93,6 +96,7 @@ class ServerUpdate(BaseModel):
     ssh_user: str | None = Field(default=None, max_length=64)
     ssh_port: int | None = Field(default=None, ge=1, le=65535)
     ssh_host: str | None = Field(default=None, max_length=255)
+    ssh_tunnel: bool | None = None
     allow_roots: list[str] | None = None
     group: str | None = None
     owner: str | None = None
