@@ -234,7 +234,6 @@ class Deployer:
                 server.port,
                 server.ssh_user,
                 server.ssh_port or 22,
-                list(server.allow_roots or []),
                 server.deploy_version,
                 server.ssh_tunnel is not False,
             )
@@ -261,12 +260,10 @@ class Deployer:
         target = await asyncio.to_thread(self._target, server_id)
         if target is None:
             return
-        host, ssh_host, port, ssh_user, ssh_port, allow_roots, version, tunnel = target
+        host, ssh_host, port, ssh_user, ssh_port, version, tunnel = target
         self._update(server_id, deploy_status="running", deploy_started_at=datetime.now(timezone.utc))
 
         env = {"GNM_AGENT_TOKEN": self.settings.agent_token, "GNM_AGENT_PORT": str(port)}
-        if allow_roots:
-            env["GNM_AGENT_ALLOW_ROOTS"] = ":".join(allow_roots)
         if tunnel:
             # 只经 SSH 转发访问，不对外监听
             env["GNM_AGENT_HOST"] = "127.0.0.1"

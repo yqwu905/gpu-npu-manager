@@ -1,5 +1,5 @@
 #!/bin/sh
-# 在目标服务器上以 root 执行：sudo ./install.sh <运行用户> <token> [端口] [允许读取的目录，多个用冒号分隔]
+# 在目标服务器上以 root 执行：sudo ./install.sh <运行用户> <token> [端口] [只允许读取的目录，多个用冒号分隔，默认不限制]
 set -eu
 USAGE="用法: install.sh <运行用户> <token> [端口] [允许读取的目录]"
 RUN_USER=${1:?$USAGE}

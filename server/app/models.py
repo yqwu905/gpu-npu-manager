@@ -30,7 +30,7 @@ class Server(Base):
     # 通过 SSH 端口转发访问 Agent（防火墙不需要放通 Agent 端口），只对填写了 ssh_user 的服务器生效
     ssh_tunnel: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=True)
     ssh_port: Mapped[int | None] = mapped_column(Integer, nullable=True, default=22)
-    allow_roots: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)
+    allow_roots: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)  # 已不再使用，Agent 不限制读取路径
     # 最近一次部署：pending / running / succeeded / failed
     deploy_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
     deploy_action: Mapped[str | None] = mapped_column(String(16), nullable=True)  # install / upgrade

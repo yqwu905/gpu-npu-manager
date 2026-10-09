@@ -696,7 +696,10 @@ MAX_JSONL_PAGE = 5000
 
 
 class FileStore(object):
-    """只允许读取白名单目录（--allow-root）下的文件，供结果浏览和评测结果回读。"""
+    """读取文件，供结果浏览和评测结果回读。
+
+    默认不限制路径（仍受运行用户的文件权限约束）；指定了 --allow-root 时只允许读取这些目录。
+    """
 
     def __init__(self, roots):
         self.roots = [os.path.realpath(os.path.expanduser(r)) for r in roots]
@@ -707,6 +710,8 @@ class FileStore(object):
         if not path:
             raise JobError(400, "缺少 path 参数")
         real = os.path.realpath(os.path.expanduser(path))
+        if not self.roots:
+            return real
         for root in self.roots:
             if real == root or real.startswith(root.rstrip(os.sep) + os.sep):
                 return real
@@ -879,7 +884,7 @@ def make_handler(collector, jobs, files, token):
 def build_server(host, port, token, disk_paths, data_dir, allow_roots=None):
     collector = Collector(disk_paths)
     jobs = JobManager(data_dir, collector.accelerator)
-    files = FileStore(allow_roots or [os.path.expanduser("~")])
+    files = FileStore(allow_roots or [])
     return ThreadingHTTPServer((host, port), make_handler(collector, jobs, files, token))
 
 
@@ -903,7 +908,7 @@ def main():
         "--allow-root",
         action="append",
         default=None,
-        help="允许中心服务读取的目录（推理结果所在位置），可重复，默认运行用户的家目录；"
+        help="只允许中心服务读取这些目录，可重复，默认不限制（受运行用户的文件权限约束）；"
         "也可用环境变量 GNM_AGENT_ALLOW_ROOTS 设置，多个用冒号分隔",
     )
     parser.add_argument("--verbose", action="store_true")
