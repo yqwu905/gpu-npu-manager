@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from ..agent_client import AgentError
 from ..deps import get_session
-from ..models import JOB_ACTIVE_STATUSES, JOB_FINISHED_STATUSES, Job, Server, utcnow
+from ..models import JOB_ACTIVE_STATUSES, JOB_FINISHED_STATUSES, Evaluation, Job, Server, utcnow
 from ..scheduler import queue_order
 from ..schemas import JobCreate, JobLog, JobOut, JobPage, JobStatus, JobUpdate, SchedulerSettings
 from ..timeutil import as_utc
@@ -150,6 +150,20 @@ async def cancel_job(
             job.error = error
             session.commit()
         return job_out(job)
+
+
+@router.delete("/jobs/{job_id}", status_code=204, summary="删除已结束的任务")
+def delete_job(job_id: int, session: Session = Depends(get_session)):
+    job = _get_job(session, job_id)
+    if job.status not in JOB_FINISHED_STATUSES:
+        raise HTTPException(409, "只有已结束的任务可以删除，排队或运行中的任务请先取消")
+    collecting = select(Evaluation.id).where(Evaluation.job_id == job_id, Evaluation.status.in_(("pending", "running")))
+    if session.scalar(collecting) is not None:
+        raise HTTPException(409, "评测结果还在收集中，请稍后再删除")
+    # 评测记录保留，只断开与任务的关联（SQLite 默认不执行外键的 ON DELETE）
+    session.execute(update(Evaluation).where(Evaluation.job_id == job_id).values(job_id=None))
+    session.delete(job)
+    session.commit()
 
 
 @router.post("/jobs/{job_id}/requeue", response_model=JobOut, status_code=201, summary="以相同参数重新排队")

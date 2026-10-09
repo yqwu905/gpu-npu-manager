@@ -146,6 +146,45 @@ def test_failed_evaluation(env):
     assert "评测任务失败" in client.get(f"/api/evaluations/{ev['id']}").json()["error"]
 
 
+def test_evaluation_progress_and_job_delete(env):
+    client, data, server_id = env
+    from app.models import Job
+
+    r = client.post("/api/results", json={"server_id": server_id, "path": str(data / "model-a")}).json()
+    ev = client.post("/api/evaluations", json={"result_set_id": r["id"], "metrics": ["psnr"]}).json()
+    # 模拟任务正在运行、评测脚本已写出进度
+    with client.app.state.session_factory() as session:
+        session.get(Job, ev["job_id"]).status = "running"
+        session.commit()
+    output = Path(ev["output_dir"])
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "progress.json").write_text(json.dumps({"stage": "lq", "done": 1, "total": 3, "elapsed": 2.5}))
+    collect = client.app.state.scheduler.after_round[0]
+    asyncio.run(collect())
+    got = client.get(f"/api/evaluations/{ev['id']}").json()
+    assert got["status"] == "running"
+    assert got["progress"] == {"stage": "lq", "done": 1, "total": 3, "elapsed": 2.5}
+    # 进度文件内容不对时保留上一次的进度
+    (output / "progress.json").write_text("{}")
+    asyncio.run(collect())
+    assert client.get(f"/api/evaluations/{ev['id']}").json()["progress"]["done"] == 1
+    # 收集结果期间不能删任务
+    assert client.delete(f"/api/jobs/{ev['job_id']}").status_code == 409
+
+    with client.app.state.session_factory() as session:
+        session.get(Job, ev["job_id"]).status = "queued"
+        session.commit()
+    run_until(client, lambda: client.get(f"/api/evaluations/{ev['id']}").json()["status"] == "succeeded")
+    got = client.get(f"/api/evaluations/{ev['id']}").json()
+    assert got["progress"] is None
+    assert json.loads((output / "progress.json").read_text()) == {"stage": "main", "done": 3, "total": 3,
+                                                                    "elapsed": pytest.approx(0, abs=60)}
+    # 删除已结束的评测任务后评测记录保留
+    assert client.delete(f"/api/jobs/{ev['job_id']}").status_code == 204
+    got = client.get(f"/api/evaluations/{ev['id']}").json()
+    assert got["job_id"] is None and got["status"] == "succeeded"
+
+
 def test_result_without_predictions_jsonl(env):
     """没有 predictions.jsonl 时扫描图片和 .txt；参考值是目录，按文件名配对。"""
     client, data, server_id = env

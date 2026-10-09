@@ -96,6 +96,10 @@ export const mockJobs = {
     const j = find(id)
     return patch(id, { status: 'cancelled', finished_at: new Date().toISOString(), exit_code: j.started_at ? -15 : null, wait_reason: null })
   },
+  remove(id: number): void {
+    find(id)
+    jobs = jobs.filter((j) => j.id !== id)
+  },
   requeue(id: number): Job {
     const j = find(id)
     const n: Job = { ...j, id: nextId++, status: 'queued', assigned_server_id: null, assigned_server_name: null, device_indices: [], pid: null, exit_code: null,

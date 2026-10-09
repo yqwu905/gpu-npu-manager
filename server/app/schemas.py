@@ -411,6 +411,13 @@ class EvaluationCreate(BaseModel):
     submitter: str | None = None
 
 
+class EvaluationProgress(BaseModel):
+    stage: Literal["lq", "main"] = Field(description="lq：正在计算 LQ 基线；main：正在评测结果集")
+    done: int
+    total: int
+    elapsed: float = Field(description="当前阶段已用秒数")
+
+
 class EvaluationOut(BaseModel):
     id: int
     result_set_id: int
@@ -433,6 +440,7 @@ class EvaluationOut(BaseModel):
     counts: dict[str, int] | None = Field(default=None, description="每个指标参与计算的样本数")
     errors: dict[str, str] | None = Field(default=None, description="未能计算的指标及原因")
     num_skipped: int | None = Field(default=None, description="读取失败或尺寸不一致而跳过的样本数")
+    progress: EvaluationProgress | None = Field(default=None, description="运行中的进度，评测脚本每 10 秒更新一次")
     compute_lq: bool = Field(default=False, description="本次评测是否计算 LQ 基线指标")
     lq_source_id: int | None = Field(default=None, description="LQ 基线指标来自哪次评测（同配置的第一次评测）")
     lq_values: dict[str, float | None] | None = Field(default=None, description="LQ 基线指标")

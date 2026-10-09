@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { resultsApi } from '../api/results'
 import { serversApi } from '../api/servers'
-import type { EvalConfig, EvalConfigBody, Evaluator, MetricKind, Project, ResultSet, Sample } from '../api/types'
+import type { EvalConfig, EvalConfigBody, Evaluation, Evaluator, MetricKind, Project, ResultSet, Sample } from '../api/types'
 import { Badge, ErrorNote, MockBadge, Modal, SampleImage, Switch } from '../components/common'
 import { EVAL_LOOK, relTime } from '../lib/format'
 import { useMock, usePoll } from '../lib/hooks'
@@ -22,6 +22,19 @@ export const metricLabel = (evaluators: Evaluator[] | null | undefined, name: st
 
 /** 样本的识别文本：样本自带的 text，没有时取评测 OCR 出的文本 */
 export const sampleText = (s: Sample | null | undefined) => (typeof s?.text === 'string' ? s.text : typeof s?.ocr_text === 'string' ? s.ocr_text : undefined)
+
+/** 运行中评测的进度，例如“LQ 基线 已处理 120/500（24%），预计还要 3 分钟” */
+function progressText(e: Evaluation): string {
+  const p = e.progress
+  if (!p || p.total <= 0) return '计算中'
+  const stage = p.stage === 'lq' ? 'LQ 基线 ' : ''
+  let text = `${stage}已处理 ${p.done}/${p.total}（${Math.floor((100 * p.done) / p.total)}%）`
+  if (p.done > 0 && p.done < p.total) {
+    const left = Math.round(((p.total - p.done) * p.elapsed) / p.done / 60)
+    text += left < 1 ? '，预计不到 1 分钟' : `，预计还要 ${left} 分钟`
+  }
+  return text
+}
 
 /** 标签输入：逗号、顿号或空白分隔 */
 const parseTags = (text: string) => [...new Set(text.split(/[,，、\s]+/).map((t) => t.trim()).filter(Boolean))]
@@ -184,12 +197,17 @@ export default function ResultsPage() {
             <span className="mono lbl grow" style={{ minWidth: 0, flexBasis: 240 }}>
               {e.error ?? (e.values
                 ? e.metrics.map((k) => `${metricLabel(evs, k)} ${fmtMetric(e.values?.[k])}`).join(' · ')
-                : `${e.metrics.map((k) => metricLabel(evs, k)).join(' · ')} · ${e.status === 'copying' ? `正在拷贝到 ${e.server_name}:${e.data_path}` : e.status === 'pending' ? '等待运行' : '计算中'}`)}
+                : `${e.metrics.map((k) => metricLabel(evs, k)).join(' · ')} · ${e.status === 'copying' ? `正在拷贝到 ${e.server_name}:${e.data_path}` : e.status === 'pending' ? '等待运行' : progressText(e)}`)}
               {e.lq_values && <span> · LQ 基线{e.compute_lq ? '' : '（复用）'} {Object.entries(e.lq_values).map(([k, v]) => `${metricLabel(evs, k)} ${fmtMetric(v)}`).join(' · ')}</span>}
               {!e.lq_values && e.lq_dir && e.status !== 'failed' && <span> · {e.compute_lq ? '本次同时计算 LQ 基线' : 'LQ 基线复用同配置的第一次评测'}</span>}
               {e.errors && Object.keys(e.errors).length > 0 && <span style={{ color: '#8A4A06' }}> · {Object.entries(e.errors).map(([k, v]) => `${metricLabel(evs, k)}：${v}`).join('；')}</span>}
               {!!e.num_skipped && <span style={{ color: '#8A4A06' }}> · 跳过 {e.num_skipped} 个样本</span>}
             </span>
+            {e.status === 'running' && e.progress && e.progress.total > 0 && (
+              <div className="bar" style={{ width: 120 }} title={progressText(e)}>
+                <div style={{ width: `${(100 * e.progress.done) / e.progress.total}%`, background: 'var(--accent)' }} />
+              </div>
+            )}
             <span className="lbl">{relTime(e.created_at)}</span>
           </div>
         ))}

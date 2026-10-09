@@ -22,7 +22,7 @@
 | 结果集详情（样本浏览） | `GET /api/results/{id}`、`GET /api/results/{id}/samples`、`GET /api/results/{id}/file`、`GET /api/evaluations?result_set_id=` |
 | 发起评测 | `GET /api/evaluators`、`POST /api/evaluations` |
 | 指标对比 | `GET /api/compare/metrics`、`GET /api/compare/samples` |
-| 任务详情与日志 | `GET /api/jobs/{id}`、`GET /api/jobs/{id}/log`、`POST /api/jobs/{id}/cancel`、`POST /api/jobs/{id}/requeue`、`PATCH /api/jobs/{id}` |
+| 任务详情与日志 | `GET /api/jobs/{id}`、`GET /api/jobs/{id}/log`、`POST /api/jobs/{id}/cancel`、`POST /api/jobs/{id}/requeue`、`PATCH /api/jobs/{id}`、`DELETE /api/jobs/{id}` |
 
 ## 接口列表
 
@@ -285,6 +285,10 @@
 
 取消任务。排队中的任务直接取消；已启动的任务会终止整个进程组（先 SIGTERM，10 秒后仍未退出则 SIGKILL）。Agent 连不上时返回 502，可加 `?force=true` 强制标记为已取消（进程可能仍在运行）。已结束的任务返回 409。
 
+### DELETE /api/jobs/{id}
+
+删除已结束的任务，返回 204。排队或运行中的任务返回 409，需要先取消；评测任务结束后、评测结果还没收集完时也返回 409。关联的评测记录保留，`job_id` 置为 null。服务器上的日志文件不删除。
+
 ### POST /api/jobs/{id}/requeue
 
 以相同参数创建一个新任务（`requeued_from` 指向原任务），只能对已结束的任务操作，返回新任务。
@@ -397,7 +401,7 @@
   "status": "succeeded",
   "values": {"psnr": 28.41, "ssim": 0.873, "ocr_a": 0.92, "cer": 0.031, "ned": 0.975},
   "counts": {"psnr": 1000, "ssim": 1000, "ocr_a": 1000, "cer": 1000, "ned": 1000},
-  "errors": null, "num_skipped": 0, "error": null,
+  "errors": null, "num_skipped": 0, "progress": null, "error": null,
   "created_at": "...", "finished_at": "..."
 }
 ```
@@ -405,6 +409,8 @@
 `compute_lq` 表示本次是否计算 LQ 基线：同一配置下 LQ、GT、Label、评测服务器都相同且指标覆盖本次的评测已经算过（或正在算）时为 false，`lq_source_id` 指向那次评测，`lq_values` 取自它。
 
 `status`：`copying`（正在拷贝到评测服务器）/ `pending`（任务排队中）/ `running` / `succeeded` / `failed`（原因见 `error`，详细输出看 `job_id` 对应任务的日志）。评测成功但个别指标算不出来（如服务器没装 lpips、缺少 `ref_text` 字段）时，该指标在 `values` 中为 `null`，原因在 `errors` 中。
+
+`progress` 只在 `running` 时有值，例如 `{"stage": "main", "done": 120, "total": 500, "elapsed": 63.2}`。数据来自评测脚本每 10 秒写一次的输出目录下 `progress.json`，中心服务每轮调度时读取。`stage` 为 `lq` 时表示正在计算 LQ 基线，之后还会评测结果集。
 
 `GET /api/evaluations?result_set_id=7` 列出某个结果集的评测历史，`GET /api/evaluations/{id}` 返回单个。
 

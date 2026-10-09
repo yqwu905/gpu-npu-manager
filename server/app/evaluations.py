@@ -7,12 +7,14 @@ import posixpath
 import shlex
 from datetime import datetime, timezone
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from .agent_client import AgentClient, AgentError
 from .config import Settings
 from .models import JOB_FINISHED_STATUSES, Evaluation, Job, ResultSet, Server
+from .schemas import EvaluationProgress
 from .tunnels import ssh_args
 
 log = logging.getLogger(__name__)
@@ -155,7 +157,17 @@ class EvaluationCollector:
             elif job_status in ("queued", "starting"):
                 continue
             elif job_status in ("running", "lost"):
-                await asyncio.to_thread(self._update, evaluation_id, status="running")
+                fields = {"status": "running"}
+                if job_status == "running":
+                    try:
+                        progress = await self.agent.read_json(host, port, posixpath.join(output_dir, "progress.json"))
+                    except AgentError:
+                        progress = None  # 还没开始写进度，或读取失败，保留上一次的进度
+                    try:
+                        fields["progress"] = EvaluationProgress.model_validate(progress).model_dump()
+                    except ValidationError:
+                        pass
+                await asyncio.to_thread(self._update, evaluation_id, **fields)
             elif job_status == "succeeded":
                 try:
                     data = await self.agent.read_json(host, port, posixpath.join(output_dir, "metrics.json"))

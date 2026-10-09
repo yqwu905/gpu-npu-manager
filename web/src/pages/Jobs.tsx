@@ -58,6 +58,17 @@ export default function JobsPage() {
       setActionErr(e instanceof ApiError ? e.detail : String(e))
     }
   }
+  const remove = async (j: Job) => {
+    if (!window.confirm(`删除任务 #${j.id}「${j.name}」？任务记录会从队列中移除，服务器上的日志文件保留。`)) return
+    setActionErr(null)
+    try {
+      await jobsApi.remove(j.id)
+      if (j.id === selId) setParams({}, { replace: true })
+      await jobs.reload()
+    } catch (e) {
+      setActionErr(e instanceof ApiError ? e.detail : String(e))
+    }
+  }
   const strict = sched.data?.strict_order ?? false
 
   return (
@@ -140,7 +151,10 @@ export default function JobsPage() {
                         })}>强制取消</button>
                       )}
                       {['succeeded', 'failed', 'cancelled'].includes(j.status) && (
-                        <button type="button" className="btn sm" onClick={stop(() => act(() => jobsApi.requeue(j.id), true))}>重新排队</button>
+                        <span className="row" style={{ gap: 6, justifyContent: 'flex-end' }}>
+                          <button type="button" className="btn sm" onClick={stop(() => act(() => jobsApi.requeue(j.id), true))}>重新排队</button>
+                          <button type="button" className="btn sm danger" onClick={stop(() => remove(j))}>删除</button>
+                        </span>
                       )}
                     </td>
                   </tr>

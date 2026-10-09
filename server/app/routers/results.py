@@ -109,6 +109,7 @@ def evaluation_out(evaluation: Evaluation) -> EvaluationOut:
         counts=evaluation.counts,
         errors=evaluation.errors,
         num_skipped=evaluation.num_skipped,
+        progress=evaluation.progress if evaluation.status == "running" else None,
         error=evaluation.error,
         created_at=as_utc(evaluation.created_at),
         finished_at=as_utc(evaluation.finished_at),

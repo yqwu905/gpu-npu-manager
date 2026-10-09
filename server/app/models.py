@@ -233,6 +233,8 @@ class Evaluation(Base):
     counts: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     errors: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # 指标名 -> 未能计算的原因
     num_skipped: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 运行中的进度，来自输出目录下的 progress.json：{"stage": "lq"/"main", "done", "total", "elapsed"}
+    progress: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

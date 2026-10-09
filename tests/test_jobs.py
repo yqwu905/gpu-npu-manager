@@ -219,6 +219,20 @@ def test_cancel_requeue_and_priority(client, cluster):
     assert client.get("/api/jobs", params={"q": "train"}).json()["total"] == 3
 
 
+def test_delete_job(client, cluster):
+    running = submit(client, num_devices=4, group="cv")
+    queued = submit(client, num_devices=4, group="cv")
+    tick(client)
+    assert job(client, running["id"])["status"] == "running"
+    assert client.delete(f"/api/jobs/{running['id']}").status_code == 409
+    assert client.delete(f"/api/jobs/{queued['id']}").status_code == 409
+    client.post(f"/api/jobs/{queued['id']}/cancel")
+    assert client.delete(f"/api/jobs/{queued['id']}").status_code == 204
+    assert client.get(f"/api/jobs/{queued['id']}").status_code == 404
+    assert client.delete(f"/api/jobs/{queued['id']}").status_code == 404
+    assert [j["id"] for j in client.get("/api/jobs").json()["items"]] == [running["id"]]
+
+
 def test_cancel_when_agent_unreachable(client, cluster):
     j = submit(client, num_devices=4, group="cv")
     tick(client)
