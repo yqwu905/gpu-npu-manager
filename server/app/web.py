@@ -18,4 +18,9 @@ def mount_web(app: FastAPI, web_dir: str) -> bool:
     def _index():
         return RedirectResponse("/ui/")
 
+    # 浏览器默认请求 /favicon.ico（如接口文档页），指向前端的图标
+    @app.get("/favicon.ico", include_in_schema=False)
+    def _favicon():
+        return RedirectResponse("/ui/favicon.svg")
+
     return True
