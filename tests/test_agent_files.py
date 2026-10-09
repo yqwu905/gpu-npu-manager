@@ -37,6 +37,12 @@ def test_paths_outside_roots_are_rejected(store):
         assert exc.value.code == 403
 
 
+def test_unrestricted_by_default(store, tmp_path):
+    """不指定 --allow-root 时可以读取任意路径（受运行用户的文件权限约束）。"""
+    files = agent.FileStore([])
+    assert files.read_raw(str(tmp_path / "secret.txt"))[0] == b"no"
+
+
 def test_jsonl_paging(store):
     files, root = store
     page = files.read_jsonl(str(root / "p.jsonl"), 2, 3)

@@ -50,7 +50,7 @@ Agent 由中心服务通过 SSH 安装和升级，不需要登录各服务器操
 
 服务器需要有 `python3`（3.7+）、`bash` 和 `base64`；关闭 SSH 转发或手动安装 Agent 时，中心主机要能直接访问 Agent 端口（默认 9100）。命令不在 PATH 中时，可在服务器的 `~/.gnm-agent/agent.local.env` 里写 `export GNM_NPU_SMI=/path/to/npu-smi`（升级不会覆盖），然后在页面上重新安装。
 
-Agent 会自动检测 `nvidia-smi` 或 `npu-smi`，任务记录和日志保存在 `~/.gnm-agent/jobs/`。中心服务只能通过 Agent 读取“允许读取的目录”（添加服务器时填写，默认登录用户家目录）下的文件，推理结果需要放在这些目录里。
+Agent 会自动检测 `nvidia-smi` 或 `npu-smi`，任务记录和日志保存在 `~/.gnm-agent/jobs/`。中心服务通过 Agent 读取推理结果，不限制路径，只受 Agent 运行用户（即 SSH 用户）的文件权限约束。
 
 评测脚本以登录用户的 `python3` 执行，需要 `numpy` 和 `Pillow`；LPIPS 另外需要 `torch` 和 `lpips`（首次运行会下载 AlexNet 权重，离线机器需提前放好缓存）。
 
@@ -58,7 +58,7 @@ Agent 会自动检测 `nvidia-smi` 或 `npu-smi`，任务记录和日志保存�
 
 ### 手动安装 Agent（不用 SSH 时）
 
-把 `agent/` 目录复制到服务器上，以 root 执行 `sudo ./install.sh <运行用户> <token> [端口] [允许读取的目录]`，装成 systemd 服务；然后在页面上添加服务器时不填 SSH 用户。手动安装的 Agent 不由中心服务升级。
+把 `agent/` 目录复制到服务器上，以 root 执行 `sudo ./install.sh <运行用户> <token> [端口] [只允许读取的目录]`，装成 systemd 服务；然后在页面上添加服务器时不填 SSH 用户。手动安装的 Agent 不由中心服务升级。
 
 ## 配置
 

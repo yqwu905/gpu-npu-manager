@@ -319,7 +319,7 @@ def update_server(
 ):
     server = _get_server(session, server_id)
     for field, value in body.model_dump(exclude_unset=True).items():
-        if field in ("name", "host", "port", "tags", "schedulable", "ssh_port", "allow_roots", "ssh_tunnel") and value is None:
+        if field in ("name", "host", "port", "tags", "schedulable", "ssh_port", "ssh_tunnel") and value is None:
             raise HTTPException(422, f"{field} 不能为空")
         if field in ("ssh_user", "ssh_host"):
             value = (value or "").strip() or None

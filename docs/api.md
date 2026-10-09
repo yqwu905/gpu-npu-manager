@@ -65,7 +65,7 @@
 {
   "id": 1, "name": "npu-01", "host": "10.0.0.11", "port": 9100,
   "group": "cv", "owner": "alice", "tags": ["910B", "lab1"], "note": null, "schedulable": true,
-  "ssh_user": "alice", "ssh_port": 22, "ssh_host": null, "ssh_tunnel": true, "allow_roots": ["/data/results"],
+  "ssh_user": "alice", "ssh_port": 22, "ssh_host": null, "ssh_tunnel": true,
   "accelerator": "npu", "status": "online", "hostname": "node11", "agent_version": "0.1.0+aabf8f791b",
   "agent_outdated": false, "managed": true,
   "deploy": {"status": "succeeded", "action": "install", "version": "0.1.0+aabf8f791b", "error": null,
@@ -132,7 +132,7 @@
 添加服务器。
 
 ```json
-{"name": "npu-01", "host": "10.0.0.11", "port": 9100, "ssh_user": "alice", "ssh_port": 22, "allow_roots": ["/data/results"],
+{"name": "npu-01", "host": "10.0.0.11", "port": 9100, "ssh_user": "alice", "ssh_port": 22,
  "group": "cv", "owner": "alice", "tags": ["910B"], "note": "", "schedulable": true}
 ```
 
@@ -183,7 +183,7 @@
 
 ### PATCH /api/servers/{id}
 
-只提交要修改的字段，例如 `{"owner": "bob", "tags": ["a100"]}`。`group`、`owner`、`note`、`ssh_user` 可以设为 `null` 清空。修改 `ssh_user`、`allow_roots`、`port` 后需要重新安装 Agent 才生效。名称重复返回 409。
+只提交要修改的字段，例如 `{"owner": "bob", "tags": ["a100"]}`。`group`、`owner`、`note`、`ssh_user` 可以设为 `null` 清空。修改 `ssh_user`、`port` 后需要重新安装 Agent 才生效。名称重复返回 409。
 
 ### DELETE /api/servers/{id}
 
@@ -322,7 +322,7 @@
 
 ### POST /api/results
 
-登记一个结果集：`{"server_id": 3, "path": "/data/results/model-a", "name": "可选", "note": "可选", "job_id": null}`。平台会读取目录下的 `meta.json`（可选）并统计 `predictions.jsonl` 的样本数；目录不在 Agent 允许读取的范围或缺少 `predictions.jsonl` 时返回 422。
+登记一个结果集：`{"server_id": 3, "path": "/data/results/model-a", "name": "可选", "note": "可选", "job_id": null}`。平台会读取目录下的 `meta.json`（可选）并统计 `predictions.jsonl` 的样本数；目录无法读取或缺少 `predictions.jsonl` 时返回 422。
 
 返回 `ResultSetOut`：
 

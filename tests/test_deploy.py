@@ -72,7 +72,7 @@ def test_install_and_upgrade(tmp_path, monkeypatch):
                 "/api/servers/batch",
                 json={
                     "servers": [
-                        {"host": "127.0.0.1", "port": port, "ssh_user": "alice", "allow_roots": [str(tmp_path)], "group": "cv"},
+                        {"host": "127.0.0.1", "port": port, "ssh_user": "alice", "group": "cv"},
                         {"host": "10.0.0.9", "name": "manual"},
                         {"host": "10.0.0.10", "name": "manual"},
                     ]
@@ -93,7 +93,7 @@ def test_install_and_upgrade(tmp_path, monkeypatch):
             assert server["status"] == "online" and server["agent_version"] == pkg["version"]
             assert not server["agent_outdated"] and server["managed"]
             env = (home / ".gnm-agent" / "bin" / "agent.env").read_text()
-            assert "GNM_AGENT_TOKEN=secret" in env and f"GNM_AGENT_ALLOW_ROOTS={tmp_path}" in env
+            assert "GNM_AGENT_TOKEN=secret" in env and "GNM_AGENT_ALLOW_ROOTS" not in env
             # 默认经 SSH 转发访问，Agent 只监听本机
             assert "GNM_AGENT_HOST=127.0.0.1" in env and server["ssh_tunnel"]
             assert f"-N -o ExitOnForwardFailure=yes" in (tmp_path / "ssh.log").read_text()
@@ -189,7 +189,7 @@ def test_old_database_gets_new_columns(tmp_path):
     conn.close()
     with make_client(tmp_path) as client:
         old = client.get("/api/servers").json()[0]
-        assert (old["name"], old["ssh_user"], old["ssh_port"], old["allow_roots"], old["deploy"]) == ("old", None, 22, [], None)
+        assert (old["name"], old["ssh_user"], old["ssh_port"], old["deploy"]) == ("old", None, 22, None)
         assert client.patch(f"/api/servers/{old['id']}", json={"ssh_user": " bob "}).json()["ssh_user"] == "bob"
 
 

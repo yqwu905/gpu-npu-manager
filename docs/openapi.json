@@ -4261,15 +4261,6 @@
             "description": "通过 SSH 端口转发访问 Agent，服务器防火墙不需要放通 Agent 端口（需填写 ssh_user）",
             "default": true
           },
-          "allow_roots": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Allow Roots",
-            "description": "允许读取的目录（推理结果所在位置），为空时为登录用户家目录",
-            "default": []
-          },
           "group": {
             "anyOf": [
               {
@@ -4447,15 +4438,6 @@
             "title": "Ssh Tunnel",
             "description": "通过 SSH 端口转发访问 Agent，服务器防火墙不需要放通 Agent 端口（需填写 ssh_user）",
             "default": true
-          },
-          "allow_roots": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Allow Roots",
-            "description": "允许读取的目录（推理结果所在位置），为空时为登录用户家目录",
-            "default": []
           },
           "group": {
             "anyOf": [
@@ -4761,20 +4743,6 @@
               }
             ],
             "title": "Ssh Tunnel"
-          },
-          "allow_roots": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Allow Roots"
           },
           "group": {
             "anyOf": [
