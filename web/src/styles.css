@@ -119,9 +119,62 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .stepper span { min-width: 28px; text-align: center; font-family: var(--mono); }
 .thumb { aspect-ratio: 4 / 3; border-radius: 6px; overflow: hidden; background: var(--track); position: relative; display: block; width: 100%; object-fit: cover; }
 
+/* 侧栏折叠：对比页默认只显示图标，悬停或键盘聚焦时浮层展开，不挤动内容 */
+.app.compact { padding-left: 64px; }
+.app.compact .side { position: fixed; top: 0; left: 0; bottom: 0; z-index: 20; width: 64px; max-width: none; padding: 20px 12px; overflow: hidden; transition: width 160ms ease, box-shadow 160ms ease; }
+.app.compact .side:hover, .app.compact .side:focus-within { width: 200px; box-shadow: 8px 0 24px rgba(21, 24, 28, 0.12); }
+.app.compact .brand { padding-left: 6px; white-space: nowrap; }
+.app.compact .brand-mark { flex-shrink: 0; }
+.app.compact .nav { padding: 0 11px; gap: 12px; white-space: nowrap; }
+.app.compact .nav svg { flex-shrink: 0; }
+.app.compact .side-foot, .app.compact .side-label { white-space: nowrap; opacity: 0; transition: opacity 120ms; }
+.app.compact .side:hover .side-foot, .app.compact .side:focus-within .side-foot,
+.app.compact .side:hover .side-label, .app.compact .side:focus-within .side-label { opacity: 1; }
+
+/* 结果对比页 */
+.cmp-main { height: 100vh; overflow: hidden; padding-top: 24px; padding-bottom: 24px; gap: 14px; }
+.cmp-body { flex: 1 1 0; min-height: 0; display: flex; gap: 14px; }
+.cmp-scroll { flex: 1 1 0; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; }
+.cmp-scroll > * { flex-shrink: 0; }
+/* 可折叠栏：外层宽度过渡，面板与竖条交叉淡入淡出，淡出结束后再隐藏，避免 Tab 进入不可见的控件 */
+.cmp-fold { position: relative; flex: 0 0 auto; min-height: 0; overflow: hidden; transition: flex-basis 260ms cubic-bezier(0.2, 0.7, 0.2, 1); }
+.cmp-panel, .cmp-rail { position: absolute; top: 0; left: 0; bottom: 0; opacity: 1; visibility: visible; transition: opacity 180ms ease, visibility 0s linear 0s; }
+.cmp-panel.off, .cmp-rail.off { opacity: 0; visibility: hidden; transition: opacity 180ms ease, visibility 0s linear 180ms; }
+.cmp-panel { display: flex; flex-direction: column; min-height: 0; }
+.cmp-panel-head { display: flex; align-items: center; gap: 8px; padding: 10px 8px 10px 16px; border-bottom: 1px solid var(--border-soft); }
+.cmp-icon-btn { width: 30px; height: 30px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 18px; line-height: 1; cursor: pointer; }
+.cmp-icon-btn:hover { background: var(--bg); color: var(--ink); }
+.cmp-rail { width: 44px; display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 12px 0; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; font: inherit; font-size: 18px; color: var(--ink); cursor: pointer; }
+.cmp-rail > * { flex-shrink: 0; }
+.cmp-rail-title { width: 1em; font-size: 13px; font-weight: 600; line-height: 1.35; word-break: break-all; text-align: center; }
+.cmp-set { display: flex; align-items: flex-start; gap: 10px; padding: 10px; border-radius: 6px; cursor: pointer; }
+.cmp-set:hover { background: #F7F8F5; }
+.cmp-set input { width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--ink); flex-shrink: 0; }
+.cmp-col-head { position: sticky; top: 0; z-index: 1; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 4px 6px; border: 0; border-bottom: 3px solid; background: var(--surface); font: inherit; text-align: left; color: var(--ink); cursor: pointer; }
+.cmp-thumb { display: flex; flex-direction: column; gap: 4px; padding: 4px; border: 0; border-radius: 6px; background: transparent; font: inherit; text-align: left; color: var(--ink); cursor: pointer; }
+.cmp-thumb:hover { background: #F7F8F5; }
+.cmp-cell { margin: 0; display: flex; flex-direction: column; overflow: hidden; }
+.cmp-name-btn { display: flex; align-items: center; gap: 7px; min-width: 0; height: 28px; padding: 0 6px; margin-left: -6px; border: 0; border-radius: 5px; background: transparent; font: inherit; color: var(--ink); cursor: pointer; }
+.cmp-name-btn:hover { background: var(--bg); }
+.cmp-vp { position: relative; aspect-ratio: 4 / 3; overflow: hidden; background: var(--track); touch-action: none; }
+.cmp-layer { position: absolute; inset: 0; transform-origin: 0 0; }
+.cmp-layer img { width: 100%; height: 100%; object-fit: contain; display: block; user-select: none; }
+.cmp-holding { position: absolute; left: 10px; top: 10px; display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 13px; background: rgba(21, 24, 28, 0.86); color: #FFFFFF; font-size: 12px; }
+.cmp-hold-btns { position: absolute; right: 8px; bottom: 8px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: calc(100% - 16px); }
+.cmp-hold { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px 0 8px; border: 1px solid rgba(255, 255, 255, 0.5); border-radius: 15px; background: rgba(21, 24, 28, 0.62); color: #FFFFFF; font: inherit; font-size: 12px; cursor: pointer; user-select: none; touch-action: none; }
+.cmp-hold.on { background: rgba(21, 24, 28, 0.95); }
+.kbd { font-family: var(--mono); font-size: 11px; padding: 2px 6px; border: 1px solid var(--control); border-bottom-width: 2px; border-radius: 4px; background: var(--bg); color: var(--ink); }
+
 @media (max-width: 720px) {
   .main { padding: 20px 16px 40px; }
   .side { flex-direction: row; flex-wrap: wrap; align-items: center; }
   .side .brand { padding-bottom: 0; width: 100%; }
   .side-foot { display: none; }
+  .app.compact { padding-left: 0; align-content: flex-start; }
+  .app.compact .side, .app.compact .side:hover, .app.compact .side:focus-within { position: static; width: auto; box-shadow: none; }
+  .app.compact .side-label { opacity: 1; }
+  .cmp-main { height: auto; overflow: visible; }
+  .cmp-body { flex-wrap: wrap; }
+  .cmp-fold { flex-basis: 100% !important; height: 320px; }
+  .cmp-panel { width: 100% !important; }
 }

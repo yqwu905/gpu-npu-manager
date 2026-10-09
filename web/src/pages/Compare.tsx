@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom'
 import { resultsApi } from '../api/results'
 import { ErrorNote, MockBadge, SampleImage, Switch } from '../components/common'
 import { useMock, usePoll } from '../lib/hooks'
+import CompareImages from './CompareImages'
 import { fmtMetric, sampleKind, sampleText } from './Results'
 
 // 三个系列的颜色在明度上拉开，色弱也能区分
@@ -37,6 +38,9 @@ export default function ComparePage() {
   const [metricPick, setMetricPick] = useState('')
   const [page, setPage] = useState(0)
   const [showLq, setShowLq] = useState(true)
+  const [view, setView] = useState<'images' | 'metrics'>('images')
+  const [setsOpen, setSetsOpen] = useState(true)
+  const [q, setQ] = useState('')
   const pageSize = 10
   const base = ids[Math.min(baseIdx, ids.length - 1)]
 
@@ -81,35 +85,66 @@ export default function ComparePage() {
   }
   const deltaColor = (v: number | null, b: number | null, hi: boolean) => (v === null || b === null || v === b ? 'var(--muted)' : (v > b) === hi ? '#1B5E3A' : '#A1281F')
 
+  // 推理结果栏：已选的排在前面，再按关键字筛选
+  const listed = [...candidates.filter((r) => ids.includes(r.id)), ...candidates.filter((r) => !ids.includes(r.id))]
+    .filter((r) => !q.trim() || r.name.toLowerCase().includes(q.trim().toLowerCase()))
+  const toggleId = (id: number) => setIds(ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id])
+
   return (
-    <main className="main" style={{ gap: 18 }}>
+    <main className="main cmp-main">
       <header className="page-head">
         <div className="grow">
           <h1>指标对比</h1>
-          <div className="lbl" style={{ marginTop: 4 }}>{ids.length ? `${ids.length} 个结果集` : '选择两个以上同类结果集进行对比'}</div>
+          <div className="lbl" style={{ marginTop: 4 }}>{view === 'images' ? '每个推理结果一次显示一张图，多个结果组成网格；图片按文件名字母序排列' : ids.length ? `${ids.length} 个结果集` : '选择两个以上同类结果集进行对比'}</div>
         </div>
         <MockBadge show={mock} what="对比" />
+        <div className="seg-group" role="group" aria-label="视图">
+          <button type="button" className={view === 'metrics' ? 'seg on' : 'seg'} aria-pressed={view === 'metrics'} onClick={() => setView('metrics')}>指标</button>
+          <button type="button" className={view === 'images' ? 'seg on' : 'seg'} aria-pressed={view === 'images'} onClick={() => setView('images')}>图片对比</button>
+        </div>
       </header>
+      <ErrorNote error={sets.error || metrics.error || (view === 'metrics' ? samples.error : null)} />
 
-      <div className="row wrap" style={{ gap: 8 }}>
-        {ids.map((id, i) => (
-          <span key={id} className="row" style={{ gap: 8, height: 34, padding: '0 6px 0 12px', borderRadius: 17, background: '#FFFFFF', border: '1px solid var(--border)' }}>
-            <span className="dot" style={{ width: 10, height: 10, borderRadius: 5, background: colorOf(id) }} />
-            <span className="mono" style={{ fontSize: 13 }}>{nameOf(id)}</span>
-            {id === base && <span className="badge" style={{ background: 'var(--ink)', color: '#FFFFFF' }}>基线</span>}
-            <button type="button" aria-label={`移除 ${nameOf(id)}`} onClick={() => setIds(ids.filter((_, k) => k !== i))}
-              style={{ width: 24, height: 24, border: 0, borderRadius: 12, background: 'transparent', cursor: 'pointer', color: 'var(--muted)' }}>×</button>
-          </span>
-        ))}
-        <select className="inp" aria-label="添加结果集" value="" onChange={(e) => e.target.value && setIds([...ids, Number(e.target.value)])} style={{ height: 34 }}>
-          <option value="">＋ 添加结果集</option>
-          {candidates.filter((r) => !ids.includes(r.id)).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-        </select>
-        <Link to="/results" style={{ fontSize: 13 }}>去结果列表挑选</Link>
-      </div>
-      <ErrorNote error={metrics.error || samples.error} />
+      <div className="cmp-body">
+        <div className="cmp-fold" style={{ flexBasis: setsOpen ? 236 : 44 }}>
+          <section aria-label="推理结果选择" aria-hidden={!setsOpen} className={setsOpen ? 'card cmp-panel' : 'card cmp-panel off'} style={{ width: 236 }}>
+            <div className="cmp-panel-head">
+              <h2 className="grow" style={{ fontSize: 15 }}>推理结果</h2>
+              <span className="lbl">已选 {ids.length} / {candidates.length}</span>
+              <button type="button" className="cmp-icon-btn" onClick={() => setSetsOpen(false)} aria-label="折叠推理结果栏" aria-expanded="true">‹</button>
+            </div>
+            <div style={{ padding: '8px 8px 0' }}>
+              <input className="inp" style={{ width: '100%', height: 32 }} placeholder="按名称筛选" aria-label="按名称筛选推理结果" value={q} onChange={(e) => setQ(e.target.value)} />
+            </div>
+            <div className="col" style={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', padding: 6, gap: 2 }}>
+              {listed.map((r) => (
+                <label key={r.id} className="cmp-set" style={ids.includes(r.id) ? { background: 'var(--bg)' } : undefined}>
+                  <input type="checkbox" checked={ids.includes(r.id)} onChange={() => toggleId(r.id)} />
+                  <span className="col" style={{ gap: 3, minWidth: 0 }}>
+                    <span className="row" style={{ gap: 7 }}>
+                      <span className="dot" style={{ width: 10, height: 10, background: ids.includes(r.id) ? colorOf(r.id) : 'var(--control)' }} />
+                      <span className="mono ellipsis" style={{ fontSize: 13, fontWeight: 500 }}>{r.name}</span>
+                    </span>
+                    <span className="lbl ellipsis">{r.server_name}{r.sample_count !== null ? ` · ${r.sample_count} 个样本` : ''}</span>
+                  </span>
+                </label>
+              ))}
+              {!listed.length && <div className="lbl" style={{ padding: 10 }}>{sets.loading ? '加载中' : '没有匹配的结果集'}</div>}
+            </div>
+            <div className="lbl" style={{ padding: '10px 16px', borderTop: '1px solid var(--border-soft)' }}><Link to="/results">去结果列表挑选</Link></div>
+          </section>
+          <button type="button" className={setsOpen ? 'cmp-rail off' : 'cmp-rail'} onClick={() => setSetsOpen(true)} aria-label="展开推理结果栏" aria-expanded="false">
+            <span aria-hidden="true">›</span>
+            <span className="cmp-rail-title">推理结果</span>
+            <span className="col" style={{ gap: 6 }}>{ids.map((id) => <span key={id} className="dot" style={{ width: 10, height: 10, background: colorOf(id) }} />)}</span>
+          </button>
+        </div>
 
-      {ids.length < 2 && <div className="card empty">至少选择两个结果集。可以在上面添加，或者在“结果与评测”页勾选后点“对比所选”。</div>}
+        {view === 'images' && <CompareImages ids={ids} nameOf={nameOf} colorOf={colorOf} mock={mock} />}
+
+        {view === 'metrics' && (
+      <div className="cmp-scroll">
+      {ids.length < 2 && <div className="card empty">至少选择两个结果集。可以在左侧勾选，或者在“结果与评测”页勾选后点“对比所选”。</div>}
 
       {ids.length >= 2 && m && (
         <>
@@ -317,6 +352,9 @@ export default function ComparePage() {
           </section>
         </>
       )}
+      </div>
+        )}
+      </div>
     </main>
   )
 }
