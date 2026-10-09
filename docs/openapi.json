@@ -2837,7 +2837,7 @@
               }
             ],
             "title": "Reference",
-            "description": "可选，参考值 jsonl 在服务器上的路径，按 id 合并 ref_image / ref_text"
+            "description": "可选，服务器上的参考目录（按文件名配对图片和 .txt）或参考值 jsonl（按 id 合并 ref_image / ref_text）"
           },
           "num_devices": {
             "type": "integer",
@@ -3891,7 +3891,7 @@
             "type": "string",
             "minLength": 1,
             "title": "Path",
-            "description": "结果集目录在服务器上的绝对路径，目录内需有 predictions.jsonl"
+            "description": "结果集目录在服务器上的绝对路径，有 predictions.jsonl 时按它读取样本，否则扫描目录里的图片和 .txt"
           },
           "name": {
             "anyOf": [
@@ -4146,7 +4146,7 @@
             },
             "type": "array",
             "title": "Items",
-            "description": "predictions.jsonl 的原始记录，另加 metrics 字段（该样本的逐样本指标）；图片字段为相对路径，用 /api/results/{id}/file?path= 读取"
+            "description": "predictions.jsonl 的原始记录（没有它时为扫描得到的 id、image、text），另加 metrics 字段（该样本的逐样本指标）；图片字段为相对路径，用 /api/results/{id}/file?path= 读取"
           }
         },
         "type": "object",

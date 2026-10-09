@@ -197,7 +197,7 @@ def test_eval_command_uses_agent_dir():
     result = ResultSet(path="/data/r1")
     evaluation = Evaluation(output_dir="/data/r1/eval/1", metrics=["psnr"], reference=None)
     command = build_command(Settings(eval_script=""), result, evaluation, "cpu")
-    assert command.startswith('python3 "$GNM_AGENT_DIR/evaluate.py" --predictions /data/r1/')
+    assert command.startswith('python3 "$GNM_AGENT_DIR/evaluate.py" --predictions /data/r1 --output /data/r1/eval/1')
 
 
 def test_ssh_target_uses_alias(tmp_path):

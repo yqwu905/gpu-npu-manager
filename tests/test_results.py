@@ -82,7 +82,9 @@ def test_results_flow(env):
     b = client.post("/api/results", json={"server_id": server_id, "path": str(data / "model-b"), "name": "B"}).json()
     assert b["name"] == "B"
     assert client.post("/api/results", json={"server_id": server_id, "path": "/etc"}).status_code == 422
-    assert client.post("/api/results", json={"server_id": server_id, "path": str(data / "gt")}).status_code == 422
+    (data / "empty").mkdir()
+    resp = client.post("/api/results", json={"server_id": server_id, "path": str(data / "empty")})
+    assert resp.status_code == 422 and "图片" in resp.json()["detail"]
 
     # 评测
     metrics = ["psnr", "ssim", "lpips", "ocr_a", "cer", "ned"]
@@ -142,3 +144,35 @@ def test_failed_evaluation(env):
     ev = client.post("/api/evaluations", json={"result_set_id": r["id"], "metrics": ["psnr"]}).json()
     run_until(client, lambda: client.get(f"/api/evaluations/{ev['id']}").json()["status"] == "failed")
     assert "评测任务失败" in client.get(f"/api/evaluations/{ev['id']}").json()["error"]
+
+
+def test_result_without_predictions_jsonl(env):
+    """没有 predictions.jsonl 时扫描图片和 .txt；参考值是目录，按文件名配对。"""
+    client, data, server_id = env
+    plain, ref = data / "plain", data / "ref"
+    (plain / "out").mkdir(parents=True)
+    ref.mkdir()
+    for i, (pred_text, ref_text) in enumerate([("hello", "hello"), ("wrld", "world"), ("中文", "中文")]):
+        (plain / "out" / f"{i}.png").write_bytes((data / "model-a" / "images" / f"{i}.png").read_bytes())
+        (plain / "out" / f"{i}.txt").write_text(pred_text + "\n")
+        (ref / f"{i}.png").write_bytes((data / "gt" / f"{i}.png").read_bytes())
+        (ref / f"{i}.txt").write_text(ref_text)
+    (plain / "notes.md").write_text("忽略")
+
+    resp = client.post("/api/results", json={"server_id": server_id, "path": str(plain)})
+    assert resp.status_code == 201, resp.text
+    result = resp.json()
+    assert (result["name"], result["sample_count"]) == ("plain", 3)
+    page = client.get(f"/api/results/{result['id']}/samples", params={"offset": 1, "limit": 1}).json()
+    item = page["items"][0]
+    assert (item["id"], item["image"], item["text"]) == ("out/1", "out/1.png", "wrld")
+
+    evaluation = client.post(
+        "/api/evaluations",
+        json={"result_set_id": result["id"], "metrics": ["psnr", "ocr_a"], "reference": str(ref)},
+    ).json()
+    run_until(client, lambda: client.get(f"/api/evaluations/{evaluation['id']}").json()["status"] == "succeeded")
+    ev = client.get(f"/api/evaluations/{evaluation['id']}").json()
+    assert ev["counts"] == {"psnr": 3, "ocr_a": 3} and ev["values"]["ocr_a"] == pytest.approx(2 / 3)
+    # 评测输出目录 eval/ 不算样本
+    assert client.get(f"/api/results/{result['id']}/samples").json()["total"] == 3

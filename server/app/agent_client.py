@@ -96,6 +96,12 @@ class AgentClient:
         except ValueError as exc:
             raise AgentError(f"{path} 不是合法 JSON: {exc}") from exc
 
+    async def read_samples(self, host, port, path: str, offset: int, limit: int) -> dict:
+        """结果集目录的样本：predictions.jsonl 的记录，没有时为扫描到的图片和 .txt。"""
+        return await self._request(
+            "GET", host, port, "/v1/files/samples", params={"path": path, "offset": offset, "limit": limit}
+        )
+
     async def read_jsonl(self, host, port, path: str, offset: int, limit: int) -> dict:
         return await self._request(
             "GET", host, port, "/v1/files/jsonl", params={"path": path, "offset": offset, "limit": limit}

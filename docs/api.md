@@ -322,7 +322,7 @@
 
 ### POST /api/results
 
-登记一个结果集：`{"server_id": 3, "path": "/data/results/model-a", "name": "可选", "note": "可选", "job_id": null}`。平台会读取目录下的 `meta.json`（可选）并统计 `predictions.jsonl` 的样本数；目录无法读取或缺少 `predictions.jsonl` 时返回 422。
+登记一个结果集：`{"server_id": 3, "path": "/data/results/model-a", "name": "可选", "note": "可选", "job_id": null}`。平台会读取目录下的 `meta.json`（可选）并统计样本数：有 `predictions.jsonl` 时按它统计，没有时扫描目录里的图片和 `.txt`（见 README“推理结果格式”）；目录无法读取或没有任何样本时返回 422。
 
 返回 `ResultSetOut`：
 
@@ -346,7 +346,7 @@
 
 ### GET /api/results/{id}/samples?offset=0&limit=50
 
-分页浏览样本，返回 `{"total": 1000, "offset": 0, "items": [...]}`。每个 item 是 `predictions.jsonl` 中的原始记录，另加 `metrics`（该样本的逐样本指标）：
+分页浏览样本，返回 `{"total": 1000, "offset": 0, "items": [...]}`。每个 item 是 `predictions.jsonl` 中的原始记录（没有它时为扫描得到的 `id`、`image`、`text`），另加 `metrics`（该样本的逐样本指标）：
 
 ```json
 {"id": "0001", "image": "images/0001.png", "ref_image": "/data/gt/0001.png",
@@ -364,7 +364,7 @@
 {"result_set_id": 7, "metrics": ["psnr", "ssim", "ocr_a", "cer", "ned"], "reference": null, "num_devices": 0, "priority": 0, "submitter": "alice"}
 ```
 
-`reference` 可选，是参考值 jsonl 在服务器上的路径。`num_devices` 默认 0；LPIPS 可以给 1 张卡加速。返回 `EvaluationOut`：
+`reference` 可选，是服务器上的参考目录（按文件名配对图片和 `.txt`）或参考值 jsonl 的路径。`num_devices` 默认 0；LPIPS 可以给 1 张卡加速。返回 `EvaluationOut`：
 
 ```json
 {
