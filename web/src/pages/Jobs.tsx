@@ -350,7 +350,9 @@ function SubmitDrawer({ from, onClose, onSubmitted }: { from?: Job | null; onClo
             <span className="lbl">卡数</span>
             <span className="stepper" style={{ height: 36 }}>
               <button type="button" aria-label="减少卡数" style={{ width: 36, height: 36 }} onClick={() => setCount(Math.max(0, count - 1))}>−</button>
-              <span style={{ width: 36, fontWeight: 500 }}>{count}</span>
+              <input aria-label="卡数" inputMode="numeric" value={count} onFocus={(e) => e.target.select()}
+                onChange={(e) => setCount(Math.min(16, Number(e.target.value.replace(/\D/g, '')) || 0))}
+                style={{ width: 40, height: 36, border: 0, textAlign: 'center', font: 'inherit', fontFamily: 'var(--mono)', fontWeight: 500 }} />
               <button type="button" aria-label="增加卡数" style={{ width: 36, height: 36 }} onClick={() => setCount(Math.min(16, count + 1))}>+</button>
             </span>
           </div>
