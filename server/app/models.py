@@ -78,6 +78,7 @@ class Device(Base):
     power_w: Mapped[float | None] = mapped_column(Float, nullable=True)
     power_limit_w: Mapped[float | None] = mapped_column(Float, nullable=True)
     health: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    health_detail: Mapped[str | None] = mapped_column(Text, nullable=True)  # 告警码和说明（目前只有昇腾）
     processes: Mapped[list] = mapped_column(JSON, default=list)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

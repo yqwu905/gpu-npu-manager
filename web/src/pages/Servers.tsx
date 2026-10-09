@@ -321,6 +321,7 @@ function ServerDetail({ id, groups, onChanged, onDeleted }: { id: number; groups
                   <span className="mono lbl">{num(d.temperature, 0, '°C')}</span>
                   <span className="mono lbl">{num(d.power_w, 0, 'W')}</span>
                 </div>
+                {d.health_detail && <div className="mono" style={{ fontSize: 12, color: look.fg }}>告警：{d.health_detail}</div>}
                 <div className="row" style={{ gap: 10 }}>
                   <div className="bar grow"><div style={{ width: `${pct(d.memory_used_mb, d.memory_total_mb)}%`, background: look.bd }} /></div>
                   <span className="mono" style={{ fontSize: 12, width: 120, textAlign: 'right' }}>{gb(d.memory_used_mb)} / {gb(d.memory_total_mb, 0)} GB</span>

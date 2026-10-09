@@ -28,6 +28,7 @@ DEVICE_FIELDS = (
     "power_w",
     "power_limit_w",
     "health",
+    "health_detail",
     "processes",
 )
 

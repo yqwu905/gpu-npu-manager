@@ -29,6 +29,7 @@ class DeviceOut(BaseModel):
     power_w: float | None = None
     power_limit_w: float | None = None
     health: str | None = None
+    health_detail: str | None = Field(None, description="健康告警的错误码和说明（昇腾卡来自 npu-smi info -t health）")
     processes: list[ProcessOut] = []
     idle: bool = Field(
         default=False, description="是否空闲：服务器在线、健康、无进程、显存占用低于阈值，且未被平台任务占用"

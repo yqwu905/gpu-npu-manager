@@ -2712,6 +2712,18 @@
             ],
             "title": "Health"
           },
+          "health_detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Health Detail",
+            "description": "健康告警的错误码和说明（昇腾卡来自 npu-smi info -t health）"
+          },
           "processes": {
             "items": {
               "$ref": "#/components/schemas/ProcessOut"
