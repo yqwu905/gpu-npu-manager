@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { serversApi } from '../api/servers'
-import type { Accelerator, GroupBy, Server, ServerQuery, ServerStatus } from '../api/types'
+import type { Accelerator, GroupBy, Server, ServerQuery, ServerStatus, ServerUpdate } from '../api/types'
 import { Badge, Chips, ErrorNote, Modal, Switch } from '../components/common'
 import { IconPlus, IconRefresh, IconSearch } from '../components/Icons'
 import { ACC_LOOK, DEVICE_LOOK, STATUS_LOOK, deviceState, gb, num, pct, relTime, schedulableIdle } from '../lib/format'
@@ -28,6 +28,17 @@ export default function ServersPage() {
   const [hasIdle, setHasIdle] = useState(false)
   const [by, setBy] = useState<By>('group')
   const [showAdd, setShowAdd] = useState(false)
+  // 批量编辑：勾选多台服务器后统一修改运行组、使用人等
+  const [bulk, setBulk] = useState(false)
+  const [checked, setChecked] = useState<Set<number>>(new Set())
+  const [showBulk, setShowBulk] = useState(false)
+  const toggleCheck = (id: number) => setChecked((prev) => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    return next
+  })
+  const exitBulk = () => { setBulk(false); setChecked(new Set()) }
 
   useEffect(() => {
     const t = setTimeout(() => setQ(qInput.trim()), 300)
@@ -89,7 +100,19 @@ export default function ServersPage() {
           </div>
         </div>
         {outdated.length > 0 && <button className="btn" type="button" onClick={upgradeAll} disabled={upgrading}><IconRefresh />升级 Agent（{outdated.length} 台）</button>}
-        <button className="btn pri" type="button" onClick={() => setShowAdd(true)}><IconPlus />添加服务器</button>
+        {bulk ? (
+          <>
+            <span className="lbl">已选 {checked.size} 台</span>
+            <button className="btn" type="button" onClick={() => setChecked(checked.size === shown.size ? new Set() : new Set(shown.keys()))}>{checked.size === shown.size && shown.size > 0 ? '全不选' : '全选'}</button>
+            <button className="btn pri" type="button" disabled={!checked.size} onClick={() => setShowBulk(true)}>修改所选</button>
+            <button className="btn" type="button" onClick={exitBulk}>完成</button>
+          </>
+        ) : (
+          <>
+            <button className="btn" type="button" onClick={() => setBulk(true)}>批量编辑</button>
+            <button className="btn pri" type="button" onClick={() => setShowAdd(true)}><IconPlus />添加服务器</button>
+          </>
+        )}
       </header>
 
       <section className="card col" style={{ padding: '14px 16px', gap: 12 }}>
@@ -142,7 +165,7 @@ export default function ServersPage() {
                   </div>
                 )}
                 <div className="srv-grid">
-                  {ss.map((s) => <ServerCard key={s.id} s={s} selected={s.id === selId} onClick={() => select(s.id)} />)}
+                  {ss.map((s) => <ServerCard key={s.id} s={s} selected={bulk ? checked.has(s.id) : s.id === selId} onClick={() => (bulk ? toggleCheck(s.id) : select(s.id))} checkable={bulk} />)}
                 </div>
               </section>
             )
@@ -151,6 +174,14 @@ export default function ServersPage() {
         {selId ? <ServerDetail key={selId} id={selId} groups={fo?.groups ?? []} onChanged={() => { grouped.reload(); all.reload(); filters.reload() }} onDeleted={() => { setParams({}, { replace: true }); grouped.reload(); all.reload() }} /> : null}
       </div>
 
+      {showBulk && (
+        <BulkEditDialog
+          servers={[...checked].map((id) => shown.get(id)).filter((s): s is Server => !!s)}
+          groups={fo?.groups ?? []}
+          onClose={() => setShowBulk(false)}
+          onDone={() => { setShowBulk(false); exitBulk(); grouped.reload(); all.reload(); filters.reload() }}
+        />
+      )}
       {showAdd && <AddServerDialog groups={fo?.groups ?? []} onClose={() => setShowAdd(false)} onAdded={(s) => { grouped.reload(); all.reload(); filters.reload(); if (s) { setShowAdd(false); select(s.id) } }} />}
     </main>
   )
@@ -165,7 +196,7 @@ function Select({ label, value, onChange, options }: { label: string; value: str
   )
 }
 
-function ServerCard({ s, selected, onClick }: { s: Server; selected: boolean; onClick: () => void }) {
+function ServerCard({ s, selected, onClick, checkable = false }: { s: Server; selected: boolean; onClick: () => void; checkable?: boolean }) {
   const acc = s.accelerator ? ACC_LOOK[s.accelerator] : null
   const h = s.host_info
   const memPct = h ? pct(h.memory_used_mb, h.memory_total_mb) : null
@@ -173,6 +204,7 @@ function ServerCard({ s, selected, onClick }: { s: Server; selected: boolean; on
   return (
     <button type="button" className={selected ? 'srv sel' : 'srv'} onClick={onClick} aria-pressed={selected}>
       <div className="row" style={{ width: '100%' }}>
+        {checkable && <input type="checkbox" checked={selected} readOnly tabIndex={-1} aria-hidden="true" style={{ margin: 0 }} />}
         <span className="dot" style={{ background: STATUS_LOOK[s.status].dot }} title={STATUS_LOOK[s.status].name} />
         <span className="mono grow ellipsis" style={{ fontWeight: 500 }}>{s.name}</span>
         {acc && <Badge bg={acc.bg} fg={acc.fg}>{acc.name}</Badge>}
@@ -442,6 +474,7 @@ function Trend({ server }: { server: Server }) {
 
 function AttrForm({ s, groups, onSaved, onDeleted }: { s: Server; groups: string[]; onSaved: (s: Server) => void; onDeleted: () => void }) {
   const [name, setName] = useState(s.name)
+  const [host, setHost] = useState(s.host)
   const [group, setGroup] = useState(s.group ?? '')
   const [owner, setOwner] = useState(s.owner ?? '')
   const [tags, setTags] = useState<string[]>(s.tags)
@@ -466,7 +499,7 @@ function AttrForm({ s, groups, onSaved, onDeleted }: { s: Server; groups: string
     setOk(false)
     try {
       onSaved(await serversApi.update(s.id, {
-        name, group: group || null, owner: owner || null, tags, note: note || null, schedulable,
+        name, host: host.trim(), group: group || null, owner: owner || null, tags, note: note || null, schedulable,
         ssh_user: sshUser.trim() || null, ssh_port: Number(sshPort) || 22, ssh_host: sshHost.trim() || null, ssh_tunnel: tunnel, port: Number(port) || 9100,
         allow_roots: roots.split('\n').map((r) => r.trim()).filter(Boolean),
       }))
@@ -486,7 +519,10 @@ function AttrForm({ s, groups, onSaved, onDeleted }: { s: Server; groups: string
   }
   return (
     <form className="col" style={{ padding: '16px 18px', gap: 14 }} onSubmit={(e) => { e.preventDefault(); save() }}>
-      <label className="field"><span className="lbl">名称</span><input className="inp" value={name} onChange={(e) => setName(e.target.value)} required /></label>
+      <div className="row" style={{ gap: 12 }}>
+        <label className="field grow" style={{ minWidth: 0 }}><span className="lbl">名称</span><input className="inp" value={name} onChange={(e) => setName(e.target.value)} required /></label>
+        <label className="field grow" style={{ minWidth: 0 }}><span className="lbl">地址</span><input className="inp mono" value={host} onChange={(e) => setHost(e.target.value)} required /></label>
+      </div>
       <div className="row" style={{ gap: 12 }}>
         <label className="field grow"><span className="lbl">运行组</span>
           <input className="inp" list="group-options" value={group} onChange={(e) => setGroup(e.target.value)} placeholder="例如 训练组" />
@@ -536,6 +572,83 @@ function AttrForm({ s, groups, onSaved, onDeleted }: { s: Server; groups: string
         <button type="submit" className="btn pri">保存</button>
       </div>
     </form>
+  )
+}
+
+function BulkEditDialog({ servers, groups, onClose, onDone }: { servers: Server[]; groups: string[]; onClose: () => void; onDone: () => void }) {
+  // 留空的项不修改
+  const [group, setGroup] = useState('')
+  const [owner, setOwner] = useState('')
+  const [addTags, setAddTags] = useState('')
+  const [removeTags, setRemoveTags] = useState('')
+  const [schedulable, setSchedulable] = useState<'' | 'yes' | 'no'>('')
+  const [sshUser, setSshUser] = useState('')
+  const [clear, setClear] = useState<{ group: boolean; owner: boolean }>({ group: false, owner: false })
+  const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState<string[]>([])
+  const split = (t: string) => t.split(/[,，\s]+/).map((x) => x.trim()).filter(Boolean)
+  const submit = async () => {
+    setBusy(true)
+    setFailed([])
+    const add = split(addTags)
+    const remove = new Set(split(removeTags))
+    const results = await Promise.all(servers.map(async (s) => {
+      const body: ServerUpdate = {}
+      if (clear.group) body.group = null
+      else if (group.trim()) body.group = group.trim()
+      if (clear.owner) body.owner = null
+      else if (owner.trim()) body.owner = owner.trim()
+      if (add.length || remove.size) body.tags = [...s.tags.filter((t) => !remove.has(t)), ...add.filter((t) => !s.tags.includes(t))]
+      if (schedulable) body.schedulable = schedulable === 'yes'
+      if (sshUser.trim()) body.ssh_user = sshUser.trim()
+      if (!Object.keys(body).length) return null
+      try {
+        await serversApi.update(s.id, body)
+        return null
+      } catch (e) {
+        return `${s.name}：${e instanceof ApiError ? e.detail : String(e)}`
+      }
+    }))
+    setBusy(false)
+    const errors = results.filter((r): r is string => !!r)
+    if (errors.length) setFailed(errors)
+    else onDone()
+  }
+  return (
+    <Modal title={`批量修改 ${servers.length} 台服务器`} onClose={onClose} width={520}>
+      <form className="col" style={{ gap: 14 }} onSubmit={(e) => { e.preventDefault(); submit() }}>
+        <div className="lbl ellipsis">{servers.map((s) => s.name).join('、')}</div>
+        <div className="notice">留空的项保持不变。</div>
+        <div className="row" style={{ gap: 12 }}>
+          <div className="field grow" style={{ minWidth: 0 }}><span className="lbl">运行组</span>
+            <input className="inp" aria-label="运行组" list="bulk-group-options" value={group} disabled={clear.group} onChange={(e) => setGroup(e.target.value)} placeholder="不修改" />
+            <datalist id="bulk-group-options">{groups.map((g) => <option key={g} value={g} />)}</datalist>
+            <label className="row lbl" style={{ gap: 6 }}><input type="checkbox" checked={clear.group} onChange={(e) => setClear({ ...clear, group: e.target.checked })} />清空运行组</label>
+          </div>
+          <div className="field grow" style={{ minWidth: 0 }}><span className="lbl">使用人</span>
+            <input className="inp" aria-label="使用人" value={owner} disabled={clear.owner} onChange={(e) => setOwner(e.target.value)} placeholder="不修改" />
+            <label className="row lbl" style={{ gap: 6 }}><input type="checkbox" checked={clear.owner} onChange={(e) => setClear({ ...clear, owner: e.target.checked })} />清空使用人</label>
+          </div>
+        </div>
+        <div className="row" style={{ gap: 12 }}>
+          <label className="field grow" style={{ minWidth: 0 }}><span className="lbl">添加标签（逗号或空格分隔）</span><input className="inp" value={addTags} onChange={(e) => setAddTags(e.target.value)} /></label>
+          <label className="field grow" style={{ minWidth: 0 }}><span className="lbl">移除标签</span><input className="inp" value={removeTags} onChange={(e) => setRemoveTags(e.target.value)} /></label>
+        </div>
+        <div className="row" style={{ gap: 12 }}>
+          <label className="field grow" style={{ minWidth: 0 }}><span className="lbl">参与调度</span>
+            <select className="inp" value={schedulable} onChange={(e) => setSchedulable(e.target.value as '' | 'yes' | 'no')}>
+              <option value="">不修改</option><option value="yes">参与</option><option value="no">不参与</option>
+            </select>
+          </label>
+          <label className="field grow" style={{ minWidth: 0 }}><span className="lbl">SSH 用户（修改后需重新安装 Agent）</span><input className="inp mono" value={sshUser} onChange={(e) => setSshUser(e.target.value)} placeholder="不修改" /></label>
+        </div>
+        {failed.length > 0 && <div className="notice err">以下服务器修改失败：{failed.map((f) => <div key={f}>{f}</div>)}</div>}
+        <div className="row" style={{ justifyContent: 'flex-end' }}>
+          <button type="button" className="btn" onClick={failed.length ? onDone : onClose}>{failed.length ? '关闭' : '取消'}</button>
+          <button type="submit" className="btn pri" disabled={busy}>{busy ? '保存中' : '保存'}</button>
+        </div>
+      </form>
+    </Modal>
   )
 }
 
