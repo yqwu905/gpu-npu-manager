@@ -47,6 +47,8 @@ class Settings:
     ssh_command: str = field(default_factory=lambda: os.environ.get("GNM_SSH_COMMAND", "ssh"))
     deploy_timeout: int = field(default_factory=lambda: _env_int("GNM_DEPLOY_TIMEOUT", 180))
     deploy_concurrency: int = field(default_factory=lambda: _env_int("GNM_DEPLOY_CONCURRENCY", 4))
+    # 评测前把结果目录拷贝到评测服务器的超时（秒）
+    copy_timeout: int = field(default_factory=lambda: _env_int("GNM_COPY_TIMEOUT", 6 * 3600))
     # 中心服务升级后，自动把 Agent 版本落后的服务器升级到当前版本
     auto_upgrade: bool = field(
         default_factory=lambda: os.environ.get("GNM_AUTO_UPGRADE", "1") not in ("0", "false", "False")

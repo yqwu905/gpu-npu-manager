@@ -140,6 +140,17 @@ class Job(Base):
     assigned_server: Mapped[Server | None] = relationship(foreign_keys=[assigned_server_id])
 
 
+class Project(Base):
+    """项目：用于归档结果集。"""
+
+    __tablename__ = "projects"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class ResultSet(Base):
     """推理结果集：某台服务器上的一个目录，内含 meta.json 和 predictions.jsonl。"""
 
@@ -153,12 +164,40 @@ class ResultSet(Base):
     sample_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     job_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 产生该结果的任务
+    project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    tags: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     server: Mapped[Server] = relationship()
+    project: Mapped[Project | None] = relationship()
     evaluations: Mapped[list["Evaluation"]] = relationship(
         back_populates="result_set", cascade="all, delete-orphan", order_by="Evaluation.id"
     )
+
+
+class EvalConfig(Base):
+    """保存的评测配置：评测哪些指标、参考数据在哪里、在哪台服务器上评测。"""
+
+    __tablename__ = "eval_configs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), unique=True)
+    metrics: Mapped[list] = mapped_column(JSON, default=list)
+    # 以下路径都在评测服务器上（未指定评测服务器时在结果所在服务器上）
+    label_file: Mapped[str | None] = mapped_column(Text, nullable=True)  # 文字指标的 PaddleOCR 标注文件
+    gt_dir: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lq_dir: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 评测服务器和其上的数据目录；指定后先把结果目录拷贝到该目录下再评测
+    server_id: Mapped[int | None] = mapped_column(ForeignKey("servers.id", ondelete="SET NULL"), nullable=True)
+    server_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    num_devices: Mapped[int] = mapped_column(Integer, default=0)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    server: Mapped[Server | None] = relationship()
 
 
 class Evaluation(Base):
@@ -170,8 +209,25 @@ class Evaluation(Base):
     result_set_id: Mapped[int] = mapped_column(ForeignKey("result_sets.id", ondelete="CASCADE"), index=True)
     metrics: Mapped[list] = mapped_column(JSON, default=list)  # 请求的指标名
     reference: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 来自评测配置（创建时复制，之后修改配置不影响已有评测）
+    config_id: Mapped[int | None] = mapped_column(ForeignKey("eval_configs.id", ondelete="SET NULL"), nullable=True)
+    label_file: Mapped[str | None] = mapped_column(Text, nullable=True)
+    gt_dir: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lq_dir: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 运行评测的服务器，为空时在结果所在服务器上；data_path 为拷贝到该服务器上的结果目录
+    server_id: Mapped[int | None] = mapped_column(ForeignKey("servers.id", ondelete="SET NULL"), nullable=True)
+    data_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # LQ 基线指标：同一配置（LQ、参考数据、评测服务器相同）只在第一次评测时计算，之后的评测引用它
+    compute_lq: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
+    lq_source_id: Mapped[int | None] = mapped_column(
+        ForeignKey("evaluations.id", ondelete="SET NULL"), nullable=True
+    )
+    lq_values: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    lq_counts: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    lq_errors: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     job_id: Mapped[int | None] = mapped_column(ForeignKey("jobs.id", ondelete="SET NULL"), nullable=True)
-    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending / running / succeeded / failed
+    # copying / pending / running / succeeded / failed
+    status: Mapped[str] = mapped_column(String(16), default="pending")
     output_dir: Mapped[str] = mapped_column(Text)
     values: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # 指标名 -> 数值
     counts: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -183,3 +239,6 @@ class Evaluation(Base):
 
     result_set: Mapped[ResultSet] = relationship(back_populates="evaluations")
     job: Mapped[Job | None] = relationship()
+    config: Mapped[EvalConfig | None] = relationship(lazy="selectin")
+    server: Mapped[Server | None] = relationship(lazy="selectin")
+    lq_source: Mapped["Evaluation | None"] = relationship(remote_side=[id], lazy="selectin")

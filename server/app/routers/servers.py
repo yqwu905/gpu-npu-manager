@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from ..config import Settings
 from ..deps import get_session, get_settings
-from ..models import JOB_ACTIVE_STATUSES, DeviceMetric, Job, Server
+from ..models import JOB_ACTIVE_STATUSES, DeviceMetric, EvalConfig, Job, Server
 from ..schemas import (
     AgentPackage,
     BatchError,
@@ -337,6 +337,8 @@ def delete_server(server_id: int, session: Session = Depends(get_session)):
     if active:
         raise HTTPException(409, "该服务器上还有运行中的任务，请先取消")
     session.query(DeviceMetric).filter(DeviceMetric.server_id == server_id).delete()
+    # 用它做评测服务器的配置改为在结果所在服务器上评测
+    session.query(EvalConfig).filter(EvalConfig.server_id == server_id).update({"server_id": None})
     session.delete(server)
     session.commit()
     return Response(status_code=204)

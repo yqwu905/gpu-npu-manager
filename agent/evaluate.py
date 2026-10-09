@@ -8,8 +8,8 @@
      相对路径相对于 predictions.jsonl 所在目录。
   2. 没有 predictions.jsonl 时扫描目录：每个图片或 .txt 文件是一个样本，样本 ID 为去掉扩展名的相对路径，
      同名的图片和 .txt 属于同一个样本（.txt 内容为识别文本）。
-  参考值（--reference）可以是 jsonl（按 id 合并 ref_image / ref_text），也可以是目录：
-  按样本 ID 配对同名的图片和 .txt，找不到时再按文件名（不含目录）配对。
+  参考值（--reference，可以给多个，例如 GT 目录和文字标注文件，按顺序合并）可以是 jsonl（按 id 合并
+  ref_image / ref_text），也可以是目录：按样本 ID 配对同名的图片和 .txt，找不到时再按文件名（不含目录）配对。
   文字参考值还可以是 PaddleOCR 格式的标注文件，每行“图片文件名<Tab>文本框 JSON 数组”：
     xxx.jpg	[{"transcription": "文字", "points": [[x, y], ...], "difficult": false}, ...]
   按图片文件名（去掉扩展名）与样本配对；忽略 difficult 为 true 或内容为 ### 的框，
@@ -17,10 +17,14 @@
   样本没有识别文本（text）但有预测图时，用 PaddleOCR（pip 包 paddleocr，2.x 和 3.x 均可）对预测图做
   检测和识别，识别出的框按同样的规则拼成文本；结果另存为输出目录下的 ocr_results.txt（标注文件格式）。
 
+  LQ 目录（--lq）按同样的规则与样本配对，配对到的 LQ 图片路径写入逐样本结果，供页面并排展示；
+  加 --lq-baseline 时把 LQ 图片当作预测结果，用同样的参考值和指标再评测一次，作为基线。
+
 输出（--output 目录）：
-  - metrics.json      整体指标、每个指标的有效样本数和错误
-  - per_sample.jsonl  逐样本指标，顺序与输入样本相同
+  - metrics.json      整体指标、每个指标的有效样本数和错误；计算了 LQ 基线时另有 lq 字段
+  - per_sample.jsonl  逐样本指标，顺序与输入样本相同，另含配对到的 ref_image、ref_text、lq_image 和 OCR 识别文本
   - ocr_results.txt   做了 OCR 时的识别结果，每行“图片路径<Tab>文本框 JSON 数组”
+  - lq/               LQ 基线的评测输出（结构同上）
 
 指标：
   图像  psnr、ssim（numpy + Pillow）、lpips（需要 torch 和 lpips 包）
@@ -350,11 +354,37 @@ def load_references(path):
     return by_id, {k: v[0] for k, v in by_name.items() if len(v) == 1}
 
 
-def evaluate(predictions_path, output_dir, metrics, reference_path=None, device="cpu", log=print):
-    records, base_dir = load_records(predictions_path)
+def merge_references(paths):
+    """合并多个参考值来源，同一样本的字段合并（如 GT 目录给 ref_image、标注文件给 ref_text）。"""
     references, references_by_name = {}, {}
-    if reference_path:
-        references, references_by_name = load_references(reference_path)
+    for path in paths:
+        by_id, by_name = load_references(path)
+        for target, source in ((references, by_id), (references_by_name, by_name)):
+            for key, item in source.items():
+                target[key] = dict(target.get(key, {}), **item)
+    return references, references_by_name
+
+
+def load_lq_images(path):
+    """LQ 目录：样本 ID -> 图片绝对路径，另按文件名建索引用于兜底配对。"""
+    records, base_dir = load_records(path)
+    by_id, by_name = {}, {}
+    for item in records:
+        if not item.get("image"):
+            continue
+        sample_id = str(item.get("id"))
+        by_id[sample_id] = resolve(base_dir, item["image"])
+        by_name.setdefault(sample_id.rsplit("/", 1)[-1], []).append(by_id[sample_id])
+    return by_id, {k: v[0] for k, v in by_name.items() if len(v) == 1}
+
+
+def evaluate(predictions_path, output_dir, metrics, reference_path=None, device="cpu", log=print,
+             lq_path=None, extra=None):
+    records, base_dir = load_records(predictions_path)
+    if isinstance(reference_path, str):
+        reference_path = [reference_path]
+    references, references_by_name = merge_references(reference_path or [])
+    lq_by_id, lq_by_name = load_lq_images(lq_path) if lq_path else ({}, {})
 
     errors = {}
     lpips_model = None
@@ -382,6 +412,13 @@ def evaluate(predictions_path, output_dir, metrics, reference_path=None, device=
         merged = dict(reference)
         merged.update({k: v for k, v in record.items() if v is not None})
         row = {"id": sample_id}
+        lq_image = lq_by_id.get(str(sample_id)) or lq_by_name.get(str(sample_id).rsplit("/", 1)[-1])
+        if lq_image:
+            row["lq_image"] = lq_image
+        if merged.get("ref_image"):
+            row["ref_image"] = resolve(base_dir, merged["ref_image"])
+        if merged.get("ref_text") is not None:
+            row["ref_text"] = merged["ref_text"]
 
         wants_image = any(m in metrics for m in IMAGE_METRICS)
         if wants_image and merged.get("image") and merged.get("ref_image"):
@@ -412,6 +449,7 @@ def evaluate(predictions_path, output_dir, metrics, reference_path=None, device=
                 try:
                     boxes = ocr(resolve(base_dir, merged["image"]))
                     merged["text"] = boxes_to_text(boxes)
+                    row["ocr_text"] = merged["text"]
                     ocr_lines.append(merged["image"] + "\t" + json.dumps(boxes, ensure_ascii=False))
                 except Exception as exc:
                     skipped.append({"id": sample_id, "error": "OCR: {}".format(exc)})
@@ -467,6 +505,7 @@ def evaluate(predictions_path, output_dir, metrics, reference_path=None, device=
         "skipped": skipped[:100],
         "num_skipped": len(skipped),
     }
+    result.update(extra or {})
     # 最后写 metrics.json，它的存在代表评测完成
     with open(os.path.join(output_dir, "metrics.json"), "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
@@ -479,7 +518,12 @@ def main():
     parser.add_argument("--output", required=True, help="评测输出目录")
     parser.add_argument("--metrics", required=True, help="逗号分隔: " + ",".join(ALL_METRICS))
     parser.add_argument(
-        "--reference", default=None, help="可选，参考值 jsonl、目录（按文件名配对）或 PaddleOCR 格式的文字标注文件"
+        "--reference", action="append", default=[],
+        help="可选，可给多个：参考值 jsonl、目录（按文件名配对）或 PaddleOCR 格式的文字标注文件"
+    )
+    parser.add_argument("--lq", default=None, help="可选，LQ 图片目录，按文件名与样本配对")
+    parser.add_argument(
+        "--lq-baseline", action="store_true", help="把 LQ 图片当作预测结果再评测一次，结果写入 metrics.json 的 lq 字段"
     )
     parser.add_argument("--device", default="cpu", help="LPIPS 使用的设备，如 cpu、cuda、npu")
     args = parser.parse_args()
@@ -488,7 +532,12 @@ def main():
     unknown = [m for m in metrics if m not in ALL_METRICS]
     if unknown:
         raise SystemExit("未知指标: {}".format(", ".join(unknown)))
-    result = evaluate(args.predictions, args.output, metrics, args.reference, args.device)
+    extra = None
+    if args.lq and args.lq_baseline:
+        print("计算 LQ 基线指标")
+        lq = evaluate(args.lq, os.path.join(args.output, "lq"), metrics, args.reference, args.device)
+        extra = {"lq": {k: lq[k] for k in ("metrics", "counts", "errors", "num_samples", "num_skipped")}}
+    result = evaluate(args.predictions, args.output, metrics, args.reference, args.device, lq_path=args.lq, extra=extra)
     print(json.dumps(result["metrics"], ensure_ascii=False))
     if result["errors"]:
         print("部分指标未能计算: {}".format(json.dumps(result["errors"], ensure_ascii=False)), file=sys.stderr)
