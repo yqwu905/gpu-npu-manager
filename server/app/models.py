@@ -193,6 +193,8 @@ class EvalConfig(Base):
     server_id: Mapped[int | None] = mapped_column(ForeignKey("servers.id", ondelete="SET NULL"), nullable=True)
     server_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     num_devices: Mapped[int] = mapped_column(Integer, default=0)
+    # 运行评测脚本的 python 解释器，为空时用中心服务的 GNM_EVAL_PYTHON
+    python: Mapped[str | None] = mapped_column(Text, nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -214,6 +216,7 @@ class Evaluation(Base):
     label_file: Mapped[str | None] = mapped_column(Text, nullable=True)
     gt_dir: Mapped[str | None] = mapped_column(Text, nullable=True)
     lq_dir: Mapped[str | None] = mapped_column(Text, nullable=True)
+    python: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 运行评测的服务器，为空时在结果所在服务器上；data_path 为拷贝到该服务器上的结果目录
     server_id: Mapped[int | None] = mapped_column(ForeignKey("servers.id", ondelete="SET NULL"), nullable=True)
     data_path: Mapped[str | None] = mapped_column(Text, nullable=True)

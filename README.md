@@ -76,7 +76,7 @@ Agent 会自动检测 `nvidia-smi` 或 `npu-smi`，任务记录和日志保存�
 | `GNM_SCHEDULE_INTERVAL` | `5` | 调度器扫描队列的间隔（秒） |
 | `GNM_SCHEDULE_STRICT` | `0` | 设为 `1` 时严格按队列顺序调度，前面的任务放不下时后面的也不调度；运行期可用 `PATCH /api/scheduler` 切换 |
 | `GNM_WEB_DIR` | `web/dist` | 前端构建产物目录，不存在时只提供接口 |
-| `GNM_EVAL_PYTHON` | `python3` | 各服务器上运行评测脚本的解释器，可改成 conda 环境中的 python 路径 |
+| `GNM_EVAL_PYTHON` | `python3` | 运行评测脚本的默认解释器；评测配置或发起评测时填写的 python 优先 |
 | `GNM_EVAL_SCRIPT` | 空 | 各服务器上评测脚本的路径，为空时用 Agent 所在目录下的 `evaluate.py` |
 | `GNM_SSH_COMMAND` | `ssh` | 安装 Agent 用的 ssh 命令，可附加参数，如 `ssh -i /path/key` |
 | `GNM_DEPLOY_CONCURRENCY` | `4` | 同时安装的服务器数 |

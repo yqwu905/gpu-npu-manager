@@ -30,12 +30,12 @@ let projectList: Project[] = [
 let configs: EvalConfig[] = [
   {
     id: 1, name: 'DIV2K ×4 标准评测', metrics: ['psnr', 'ssim', 'lpips'], label_file: null, gt_dir: '/data/datasets/DIV2K/valid_HR',
-    lq_dir: '/data/datasets/DIV2K/valid_LR_x4', server_id: 4, server_name: 'gpu-l40s-01', server_path: '/data/eval', num_devices: 1, note: null,
+    lq_dir: '/data/datasets/DIV2K/valid_LR_x4', server_id: 4, server_name: 'gpu-l40s-01', server_path: '/data/eval', num_devices: 1, python: '/data/envs/eval/bin/python', note: null,
     created_at: ago(5000), updated_at: ago(5000),
   },
   {
     id: 2, name: '票据 v2 OCR', metrics: ['ocr_a', 'cer', 'ned'], label_file: '/data/datasets/bills-v2/Label.txt', gt_dir: null, lq_dir: null,
-    server_id: null, server_name: null, server_path: null, num_devices: 1, note: '在结果所在服务器上评测', created_at: ago(4000), updated_at: ago(4000),
+    server_id: null, server_name: null, server_path: null, num_devices: 1, python: null, note: '在结果所在服务器上评测', created_at: ago(4000), updated_at: ago(4000),
   },
 ]
 
@@ -62,7 +62,7 @@ const EVALUATORS: Evaluator[] = [
 function ev(id: number, setId: number, metrics: string[], job_id: number, status: Evaluation['status'], values: Record<string, number | null> | null, error: string | null, min: number): Evaluation {
   const s = findSet(setId)
   return {
-    id, result_set_id: setId, result_set_name: s.name, metrics, reference: null, config_id: null, config_name: null, label_file: null, gt_dir: null, lq_dir: null,
+    id, result_set_id: setId, result_set_name: s.name, metrics, reference: null, config_id: null, config_name: null, label_file: null, gt_dir: null, lq_dir: null, python: null,
     server_id: s.server_id, server_name: s.server_name, data_path: s.path, output_dir: `${s.path}/eval/${id}`, compute_lq: false, lq_source_id: null,
     lq_values: null, lq_counts: null, lq_errors: null, job_id, job_status: status === 'pending' ? 'queued' : status,
     status, values, counts: null, errors: null, num_skipped: values ? 0 : null, error,
@@ -189,7 +189,8 @@ export const mockResults = {
   evaluate(body: EvaluationCreate): Evaluation {
     const config = configs.find((c) => c.id === body.config_id)
     const e = ev(Math.max(...evaluations.map((x) => x.id)) + 1, body.result_set_id, body.metrics ?? config?.metrics ?? [], 1299, config?.server_id ? 'copying' : 'pending', null, null, 0)
-    if (config) Object.assign(e, { config_id: config.id, config_name: config.name, lq_dir: config.lq_dir, gt_dir: config.gt_dir, label_file: config.label_file })
+    if (config) Object.assign(e, { config_id: config.id, config_name: config.name, lq_dir: config.lq_dir, gt_dir: config.gt_dir, label_file: config.label_file, python: config.python })
+    if (body.python !== undefined) e.python = body.python
     e.reference = body.reference ?? null
     evaluations = [e, ...evaluations]
     sets = sets.map((s) => (s.id === body.result_set_id ? { ...s, evaluating: true } : s))

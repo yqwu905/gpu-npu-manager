@@ -26,6 +26,7 @@ def config_out(config: EvalConfig) -> EvalConfigOut:
         server_name=config.server.name if config.server else None,
         server_path=config.server_path,
         num_devices=config.num_devices or 0,
+        python=config.python,
         note=config.note,
         created_at=as_utc(config.created_at),
         updated_at=as_utc(config.updated_at),
@@ -33,7 +34,7 @@ def config_out(config: EvalConfig) -> EvalConfigOut:
 
 
 def normalize_paths(fields: dict) -> dict:
-    """路径字段：去掉首尾空白，空串视为未填，必须是绝对路径。"""
+    """路径字段：去掉首尾空白，空串视为未填，必须是绝对路径；python 只去掉首尾空白。"""
     for field in PATH_FIELDS:
         if field not in fields:
             continue
@@ -41,6 +42,8 @@ def normalize_paths(fields: dict) -> dict:
         if value and not posixpath.isabs(value):
             raise HTTPException(422, f"{field} 必须是绝对路径")
         fields[field] = posixpath.normpath(value) if value else None
+    if "python" in fields:
+        fields["python"] = (fields["python"] or "").strip() or None
     return fields
 
 

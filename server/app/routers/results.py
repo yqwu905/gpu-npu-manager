@@ -93,6 +93,7 @@ def evaluation_out(evaluation: Evaluation) -> EvaluationOut:
         label_file=evaluation.label_file,
         gt_dir=evaluation.gt_dir,
         lq_dir=evaluation.lq_dir,
+        python=evaluation.python,
         server_id=server.id,
         server_name=server.name,
         data_path=evaluation.data_path or evaluation.result_set.path,
@@ -358,7 +359,7 @@ def _load_evaluation(session: Session, evaluation_id: int) -> Evaluation:
     return evaluation
 
 
-CONFIG_FIELDS = ("metrics", "label_file", "gt_dir", "lq_dir", "server_id", "server_path", "num_devices")
+CONFIG_FIELDS = ("metrics", "label_file", "gt_dir", "lq_dir", "server_id", "server_path", "num_devices", "python")
 
 
 def _evaluation_fields(session: Session, body: EvaluationCreate) -> dict:
@@ -406,6 +407,7 @@ async def create_evaluation(
             label_file=fields.get("label_file"),
             gt_dir=fields.get("gt_dir"),
             lq_dir=fields.get("lq_dir"),
+            python=fields.get("python"),
             server=server if copy else None,
             status="copying" if copy else "pending",
             output_dir="",

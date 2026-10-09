@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import shlex
 import sys
 import threading
 import time
@@ -119,8 +120,11 @@ def test_eval_configs(env):
         assert client.post("/api/eval-configs", json={**body, **bad}).status_code == 422, bad
     config = client.post("/api/eval-configs", json=body).json()
     assert config["metrics"] == ["psnr", "ocr_a"] and config["gt_dir"] == str(data / "gt")
-    assert config["server_name"] == "eval-srv"
+    assert config["server_name"] == "eval-srv" and config["python"] is None
     assert client.post("/api/eval-configs", json=body).status_code == 409
+    resp = client.patch(f"/api/eval-configs/{config['id']}", json={"python": " /opt/venv/bin/python "})
+    assert resp.json()["python"] == "/opt/venv/bin/python"
+    assert client.patch(f"/api/eval-configs/{config['id']}", json={"python": ""}).json()["python"] is None
     resp = client.patch(f"/api/eval-configs/{config['id']}", json={"note": "x", "server_id": None})
     assert resp.json()["server_id"] is None and resp.json()["note"] == "x"
     assert client.patch(f"/api/eval-configs/{config['id']}", json={"metrics": None}).status_code == 422
@@ -142,9 +146,14 @@ def wait_status(client, evaluation_id, statuses, timeout=30):
 def test_evaluate_on_eval_server(env):
     client, tmp_path, data, ids = env
     eval_host = tmp_path / "eval-host"
+    # 评测配置指定的 python：包一层脚本，确认任务用的是它
+    python = tmp_path / "bin" / "eval python"
+    python.parent.mkdir()
+    python.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+    python.chmod(0o755)
     config = client.post("/api/eval-configs", json={
         "name": "sr", "metrics": ["psnr", "ocr_a"], "gt_dir": str(data / "gt"), "label_file": str(data / "label.txt"),
-        "lq_dir": str(data / "lq"), "server_id": ids["eval-srv"], "server_path": str(eval_host),
+        "lq_dir": str(data / "lq"), "server_id": ids["eval-srv"], "server_path": str(eval_host), "python": str(python),
     }).json()
     results = [client.post("/api/results", json={"server_id": ids["srv"], "path": str(data / name)}).json()
                for name in ("model-a", "model-b")]
@@ -160,6 +169,8 @@ def test_evaluate_on_eval_server(env):
     run_until(client, lambda: client.get(f"/api/evaluations/{first['id']}").json()["status"] in ("succeeded", "failed"))
     first = client.get(f"/api/evaluations/{first['id']}").json()
     assert first["status"] == "succeeded", first["error"]
+    assert first["python"] == str(python)
+    assert client.get(f"/api/jobs/{first['job_id']}").json()["command"].startswith(shlex.quote(str(python)) + " ")
     # 文字参考值来自标注文件，图像参考值来自 GT 目录
     assert first["values"]["ocr_a"] == 1.0 and first["counts"] == {"psnr": 3, "ocr_a": 3}
     assert first["lq_values"]["psnr"] < first["values"]["psnr"]
@@ -169,7 +180,8 @@ def test_evaluate_on_eval_server(env):
 
     # 同一配置的第二次评测引用第一次的 LQ 基线，不再计算
     second = client.post("/api/evaluations", json={"result_set_id": results[1]["id"], "config_id": config["id"],
-                                                   "metrics": ["psnr"]}).json()
+                                                   "metrics": ["psnr"], "python": sys.executable}).json()
+    assert second["python"] == sys.executable  # 提交时可以覆盖配置中的 python
     assert second["compute_lq"] is False and second["lq_source_id"] == first["id"]
     wait_status(client, second["id"], ("pending",))
     run_until(client, lambda: client.get(f"/api/evaluations/{second['id']}").json()["status"] == "succeeded")

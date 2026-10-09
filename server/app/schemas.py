@@ -367,6 +367,7 @@ class EvalConfigBase(BaseModel):
     server_id: int | None = Field(default=None, description="评测服务器；指定后把结果目录拷贝到 server_path 下再评测，为空时在结果所在服务器上评测")
     server_path: str | None = Field(default=None, description="评测服务器上存放拷贝数据的目录，指定评测服务器时必填")
     num_devices: int = Field(default=0, ge=0, le=8, description="LPIPS、OCR 可用 1 张卡加速")
+    python: str | None = Field(default=None, max_length=1024, description="运行评测脚本的 python 解释器，如 /path/to/.venv/bin/python；为空时用中心服务的 GNM_EVAL_PYTHON（默认 python3）")
     note: str | None = None
 
 
@@ -385,6 +386,7 @@ class EvalConfigUpdate(BaseModel):
     server_id: int | None = None
     server_path: str | None = None
     num_devices: int | None = Field(default=None, ge=0, le=8)
+    python: str | None = Field(default=None, max_length=1024)
     note: str | None = None
 
 
@@ -407,6 +409,7 @@ class EvaluationCreate(BaseModel):
     server_id: int | None = Field(default=None, description="评测服务器，见评测配置")
     server_path: str | None = None
     num_devices: int | None = Field(default=None, ge=0, le=8, description="LPIPS 可用 1 张卡加速，其他指标用 0 即可；不填时取配置中的值或 0")
+    python: str | None = Field(default=None, max_length=1024, description="运行评测脚本的 python 解释器，如 /path/to/.venv/bin/python；为空时用中心服务的 GNM_EVAL_PYTHON（默认 python3）")
     priority: int = Field(default=0, ge=-100, le=100)
     submitter: str | None = None
 
@@ -429,6 +432,7 @@ class EvaluationOut(BaseModel):
     label_file: str | None = None
     gt_dir: str | None = None
     lq_dir: str | None = None
+    python: str | None = Field(default=None, description="运行评测脚本的 python，为空时用 GNM_EVAL_PYTHON")
     server_id: int = Field(description="运行评测的服务器")
     server_name: str
     data_path: str = Field(description="评测服务器上的结果目录（拷贝过去的，或结果集原目录）")

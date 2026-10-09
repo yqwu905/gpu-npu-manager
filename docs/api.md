@@ -318,8 +318,10 @@
 ```json
 {"name": "DIV2K ×4", "metrics": ["psnr", "ssim", "ocr_a"],
  "label_file": "/data/ds/Label.txt", "gt_dir": "/data/ds/HR", "lq_dir": "/data/ds/LR",
- "server_id": 5, "server_path": "/data/eval", "num_devices": 1, "note": null}
+ "server_id": 5, "server_path": "/data/eval", "num_devices": 1, "python": "/data/envs/eval/bin/python", "note": null}
 ```
+
+`python` 是在评测服务器上运行评测脚本的解释器，例如装了 torch、lpips、paddleocr 的 venv 中的 `bin/python`；为空时用中心服务的 `GNM_EVAL_PYTHON`（默认 `python3`）。
 
 路径都在评测服务器上（`server_id` 为空时在结果所在服务器上），必须是绝对路径，空串视为未填。指定 `server_id` 时 `server_path` 必填，且该服务器要填写 SSH 用户。返回值另有 `id`、`server_name`、`created_at`、`updated_at`。修改和删除配置不影响已有评测。
 
@@ -386,7 +388,7 @@
 {"result_set_id": 7, "metrics": ["psnr", "ssim", "ocr_a", "cer", "ned"], "reference": null, "num_devices": 0, "priority": 0, "submitter": "alice"}
 ```
 
-也可以用评测配置：`{"result_set_id": 7, "config_id": 3}`，请求里另外给出的 `metrics`、`label_file`、`gt_dir`、`lq_dir`、`server_id`、`server_path`、`num_devices` 覆盖配置中的值。评测服务器与结果所在服务器不同时，先把结果目录拷贝到 `server_path/result_<结果集 ID>`（状态 `copying`），完成后再提交评测任务；结果所在服务器没有填写 SSH 用户时返回 422。
+也可以用评测配置：`{"result_set_id": 7, "config_id": 3}`，请求里另外给出的 `metrics`、`label_file`、`gt_dir`、`lq_dir`、`server_id`、`server_path`、`num_devices`、`python` 覆盖配置中的值。评测服务器与结果所在服务器不同时，先把结果目录拷贝到 `server_path/result_<结果集 ID>`（状态 `copying`），完成后再提交评测任务；结果所在服务器没有填写 SSH 用户时返回 422。
 
 `reference` 可选，是服务器上的参考目录（按文件名配对图片和 `.txt`）、参考值 jsonl，或 PaddleOCR 格式的文字标注文件（每行“图片文件名<Tab>文本框 JSON 数组”，见 README）的路径。样本没有识别文本时，文字指标会先用 PaddleOCR 识别预测图。`num_devices` 默认 0；LPIPS 和 OCR 可以给 1 张卡加速。返回 `EvaluationOut`：
 
@@ -395,6 +397,7 @@
   "id": 12, "result_set_id": 7, "result_set_name": "model-a",
   "metrics": ["psnr", "ssim", "ocr_a", "cer", "ned"], "reference": null,
   "config_id": 3, "config_name": "DIV2K ×4", "label_file": null, "gt_dir": "/data/ds/HR", "lq_dir": "/data/ds/LR",
+  "python": "/data/envs/eval/bin/python",
   "server_id": 5, "server_name": "gpu-05", "data_path": "/data/eval/result_7", "output_dir": "/data/eval/result_7/eval/12",
   "compute_lq": true, "lq_source_id": 12, "lq_values": {"psnr": 24.9, "ssim": 0.70}, "lq_counts": {"psnr": 1000, "ssim": 1000}, "lq_errors": null,
   "job_id": 88, "job_status": "succeeded",

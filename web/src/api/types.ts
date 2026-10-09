@@ -335,6 +335,8 @@ export interface EvalConfigBody {
   server_id: number | null
   server_path: string | null
   num_devices: number
+  /** 运行评测脚本的 python 解释器，为空时用中心服务的 GNM_EVAL_PYTHON（默认 python3） */
+  python: string | null
   note: string | null
 }
 
@@ -381,6 +383,7 @@ export interface Evaluation {
   label_file: string | null
   gt_dir: string | null
   lq_dir: string | null
+  python: string | null
   /** 运行评测的服务器 */
   server_id: number
   server_name: string
@@ -419,6 +422,7 @@ export interface EvaluationCreate {
   server_id?: number | null
   server_path?: string | null
   num_devices?: number
+  python?: string | null
   priority?: number
   submitter?: string | null
 }
