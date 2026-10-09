@@ -27,7 +27,7 @@
   - lq/               LQ 基线的评测输出（结构同上）
 
 指标：
-  图像  psnr、ssim（numpy + Pillow）、lpips（需要 torch 和 lpips 包）
+  图像  psnr、ssim（--device 不是 cpu 且装了 torch 时在 GPU/NPU 上算，否则用 numpy）、lpips（需要 torch 和 lpips 包）
   文本  ocr_a（整句完全一致的比例）、cer（字符错误率）、ned（1-NED，归一化编辑距离相似度）
 """
 import argparse
@@ -36,6 +36,7 @@ import math
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 IMAGE_METRICS = ("psnr", "ssim", "lpips")
 TEXT_METRICS = ("ocr_a", "cer", "ned")
@@ -44,6 +45,8 @@ ALL_METRICS = IMAGE_METRICS + TEXT_METRICS
 PSNR_CAP = 100.0
 # 进度日志的最小间隔（秒）
 PROGRESS_SECONDS = 10
+# 并行解码图片的线程数，也是提前解码的样本数
+IMAGE_WORKERS = max(1, min(4, os.cpu_count() or 1))
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +136,57 @@ def ssim(pred, ref):
         s = ((2 * ux * uy + c1) * (2 * vxy + c2)) / ((ux ** 2 + uy ** 2 + c1) * (vx + vy + c2))
         values.append(s[radius:-radius, radius:-radius].mean())
     return float(sum(values) / len(values))
+
+
+class TorchImageMetrics(object):
+    """在 GPU/NPU 上用 torch 算 PSNR 和 SSIM，公式与上面的 numpy 版本相同（float32 计算，差异在 1e-4 以内）。
+
+    SSIM 最后会裁掉边缘 radius 个像素，裁剪后的区域不依赖边界延拓，所以这里直接做不补边的卷积。
+    """
+
+    def __init__(self, device):
+        import torch
+        import torch.nn.functional as F
+
+        if device.startswith("npu"):
+            import torch_npu  # noqa: F401
+
+        self.torch = torch
+        self.F = F
+        self.device = device
+        kernel, self.radius = _gaussian_kernel()
+        k = torch.tensor(kernel, dtype=torch.float32, device=device)
+        self.kx = k.view(1, 1, 1, -1).repeat(3, 1, 1, 1)
+        self.ky = k.view(1, 1, -1, 1).repeat(3, 1, 1, 1)
+
+    def _filter(self, x):
+        x = self.F.conv2d(x, self.kx, groups=3)
+        return self.F.conv2d(x, self.ky, groups=3)
+
+    def __call__(self, pred, ref, metrics):
+        torch = self.torch
+
+        def to_tensor(img):
+            return torch.from_numpy(img).to(self.device, torch.float32).permute(2, 0, 1).unsqueeze(0)
+
+        values = {}
+        with torch.no_grad():
+            x = to_tensor(pred)
+            y = to_tensor(ref)
+            if "psnr" in metrics:
+                mse = float(torch.mean((x - y) ** 2).item())
+                values["psnr"] = PSNR_CAP if mse == 0 else min(PSNR_CAP, 10.0 * math.log10(255.0 ** 2 / mse))
+            if "ssim" in metrics:
+                c1 = (0.01 * 255) ** 2
+                c2 = (0.03 * 255) ** 2
+                ux = self._filter(x)
+                uy = self._filter(y)
+                vx = self._filter(x * x) - ux * ux
+                vy = self._filter(y * y) - uy * uy
+                vxy = self._filter(x * y) - ux * uy
+                s = ((2 * ux * uy + c1) * (2 * vxy + c2)) / ((ux ** 2 + uy ** 2 + c1) * (vx + vy + c2))
+                values["ssim"] = float(s.mean(dim=(2, 3)).mean().item())
+        return values
 
 
 class Lpips(object):
@@ -408,6 +462,12 @@ def evaluate(predictions_path, output_dir, metrics, reference_path=None, device=
             lpips_model = Lpips(device)
         except Exception as exc:  # 缺少依赖或设备不可用
             errors["lpips"] = "LPIPS 初始化失败（需要安装 torch 和 lpips）: {}".format(exc)
+    torch_metrics = None
+    if device != "cpu" and ("psnr" in metrics or "ssim" in metrics):
+        try:
+            torch_metrics = TorchImageMetrics(device)
+        except Exception as exc:  # 没装 torch 或设备不可用时退回 numpy
+            log("PSNR/SSIM 改用 CPU 计算（torch 不可用: {}）".format(exc))
     ocr = None
     ocr_error = None
     ocr_lines = []
@@ -420,13 +480,33 @@ def evaluate(predictions_path, output_dir, metrics, reference_path=None, device=
     per_sample = []
     started = last_log = time.time()
 
-    for index, record in enumerate(records):
+    def merge(index, record):
         sample_id = record.get("id", index)
         reference = references.get(str(sample_id))
         if reference is None:
             reference = references_by_name.get(str(sample_id).rsplit("/", 1)[-1], {})
         merged = dict(reference)
         merged.update({k: v for k, v in record.items() if v is not None})
+        return merged
+
+    wants_image = any(m in metrics for m in IMAGE_METRICS)
+    merged_records = [merge(index, record) for index, record in enumerate(records)]
+
+    def load_pair(merged):
+        return load_image(resolve(base_dir, merged["image"])), load_image(resolve(base_dir, merged["ref_image"]))
+
+    # 后台线程提前解码后面几个样本的图片，计算和解码并行
+    pool = ThreadPoolExecutor(IMAGE_WORKERS) if wants_image else None
+    pending = {}
+
+    def prefetch(start):
+        for j in range(start, min(start + IMAGE_WORKERS, len(records))):
+            if j not in pending and merged_records[j].get("image") and merged_records[j].get("ref_image"):
+                pending[j] = pool.submit(load_pair, merged_records[j])
+
+    for index, record in enumerate(records):
+        sample_id = record.get("id", index)
+        merged = merged_records[index]
         row = {"id": sample_id}
         lq_image = lq_by_id.get(str(sample_id)) or lq_by_name.get(str(sample_id).rsplit("/", 1)[-1])
         if lq_image:
@@ -436,17 +516,19 @@ def evaluate(predictions_path, output_dir, metrics, reference_path=None, device=
         if merged.get("ref_text") is not None:
             row["ref_text"] = merged["ref_text"]
 
-        wants_image = any(m in metrics for m in IMAGE_METRICS)
         if wants_image and merged.get("image") and merged.get("ref_image"):
+            prefetch(index)
             try:
-                pred = load_image(resolve(base_dir, merged["image"]))
-                ref = load_image(resolve(base_dir, merged["ref_image"]))
+                pred, ref = pending.pop(index).result()
                 if pred.shape != ref.shape:
                     raise ValueError("尺寸不一致 {} vs {}".format(pred.shape[:2], ref.shape[:2]))
-                if "psnr" in metrics:
-                    row["psnr"] = psnr(pred, ref)
-                if "ssim" in metrics:
-                    row["ssim"] = ssim(pred, ref)
+                if torch_metrics is not None:
+                    row.update(torch_metrics(pred, ref, metrics))
+                else:
+                    if "psnr" in metrics:
+                        row["psnr"] = psnr(pred, ref)
+                    if "ssim" in metrics:
+                        row["ssim"] = ssim(pred, ref)
                 if lpips_model is not None:
                     row["lpips"] = lpips_model(pred, ref)
             except Exception as exc:
@@ -493,6 +575,8 @@ def evaluate(predictions_path, output_dir, metrics, reference_path=None, device=
         if now - last_log >= PROGRESS_SECONDS or index + 1 == len(records):
             last_log = now
             log("已处理 {}/{}，用时 {:.0f} 秒".format(index + 1, len(records), now - started))
+    if pool is not None:
+        pool.shutdown()
 
     summary = {}
     for metric in metrics:
