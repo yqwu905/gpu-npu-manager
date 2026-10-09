@@ -322,7 +322,7 @@ class SamplePage(BaseModel):
 class EvaluationCreate(BaseModel):
     result_set_id: int
     metrics: list[MetricName] = Field(min_length=1)
-    reference: str | None = Field(default=None, description="可选，服务器上的参考目录（按文件名配对图片和 .txt）或参考值 jsonl（按 id 合并 ref_image / ref_text）")
+    reference: str | None = Field(default=None, description="可选，服务器上的参考目录（按文件名配对图片和 .txt）、参考值 jsonl（按 id 合并 ref_image / ref_text），或 PaddleOCR 格式的文字标注文件")
     num_devices: int = Field(default=0, ge=0, le=8, description="LPIPS 可用 1 张卡加速，其他指标用 0 即可")
     priority: int = Field(default=0, ge=-100, le=100)
     submitter: str | None = None

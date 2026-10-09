@@ -284,7 +284,7 @@ function EvalDialog({ r, evaluators, onClose, onDone }: { r: ResultSet; evaluato
             </div>
           </div>
         ))}
-        <label className="field"><span className="lbl">参考值（可选，服务器上的参考目录，按文件名配对图片和 .txt；也可以是 jsonl，按 id 合并 ref_image / ref_text）</span>
+        <label className="field"><span className="lbl">参考值（可选，服务器上的参考目录，按文件名配对图片和 .txt；也可以是 jsonl，或 PaddleOCR 格式的文字标注文件 Label.txt）</span>
           <input className="inp mono" style={{ fontSize: 13 }} placeholder="/data/gt，predictions.jsonl 已带参考值时留空" value={reference} onChange={(e) => setReference(e.target.value)} />
         </label>
         <div className="row" style={{ gap: 12 }}>

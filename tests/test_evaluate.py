@@ -80,3 +80,30 @@ def test_evaluate_end_to_end(tmp_path):
     assert rows[1]["psnr"] == evaluate.PSNR_CAP and rows[1]["ocr_a"] == 0.0
     assert "psnr" not in rows[2] and "cer" not in rows[2]
     assert json.loads((out / "metrics.json").read_text())["metrics"] == m
+
+
+def test_ocr_label_reference(tmp_path):
+    """文字参考值是 PaddleOCR 格式的标注文件：按图片文件名配对，多个框按阅读顺序拼接。"""
+    def box(text, x, y, w=100, h=40, difficult=False):
+        return {"transcription": text, "points": [[x, y], [x + w, y], [x + w, y + h], [x, y + h]], "difficult": difficult}
+
+    label = tmp_path / "Label.txt"
+    rows = {
+        # 第二行的两个框高度略有错开，仍算同一行；difficult 和 ### 的框忽略
+        "img_a_INPUT.jpg": [box("P38", 300, 105), box("第二行", 10, 300), box("P18", 100, 100),
+                            box("看不清", 10, 500, difficult=True), box("###", 10, 600), box("标题", 10, 10)],
+        "img_b_INPUT.jpg": [box("HEFU", 0, 0)],
+    }
+    label.write_text("\n".join(f"{name}\t{json.dumps(boxes, ensure_ascii=False)}" for name, boxes in rows.items()) + "\n")
+    assert evaluate.is_ocr_label_file(str(label))
+    assert evaluate.load_ocr_labels(str(label))["img_a_INPUT"]["ref_text"] == "标题\nP18 P38\n第二行"
+
+    preds = [{"id": "out/img_a_INPUT", "text": "标题\nP18 P38\n第二行"}, {"id": "img_b_INPUT", "text": "HEFV"}]
+    (tmp_path / "predictions.jsonl").write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in preds) + "\n")
+    result = evaluate.evaluate(
+        str(tmp_path / "predictions.jsonl"), str(tmp_path / "eval"), ["ocr_a", "cer"],
+        reference_path=str(label), log=lambda *_: None,
+    )
+    assert result["counts"] == {"ocr_a": 2, "cer": 2}
+    assert result["metrics"]["ocr_a"] == pytest.approx(0.5)
+    assert result["metrics"]["cer"] == pytest.approx(1 / (len("标题\nP18 P38\n第二行") + 4))

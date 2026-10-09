@@ -104,7 +104,15 @@ model-a/
 | `image` / `ref_image` | 预测图与参考图路径，相对路径相对于 predictions.jsonl 所在目录；用于 PSNR、SSIM、LPIPS |
 | `text` / `ref_text` | 识别文本与参考文本；用于 OCR-A、CER、1-NED |
 
-参考值也可以放在单独的 jsonl 或目录里（发起评测时填 `reference`），jsonl 按 `id` 合并 `ref_image`、`ref_text`。其他字段会原样展示在样本浏览页。
+参考值也可以放在单独的 jsonl 或目录里（发起评测时填 `reference`），jsonl 按 `id` 合并 `ref_image`、`ref_text`。
+
+文字参考值还可以直接用 PaddleOCR 格式的标注文件（如 `Label.txt`），每行是“图片文件名<Tab>文本框 JSON 数组”：
+
+```
+xxx_INPUT.jpg	[{"transcription": "手機報在线", "points": [[1179, 551], [1652, 544], [1654, 666], [1181, 673]], "difficult": false}, ...]
+```
+
+按图片文件名（去掉扩展名）与样本 ID 配对，对不上时按不含目录的文件名配对。`difficult` 为 true 或内容为 `###` 的框不参与评测；其余框按阅读顺序拼成参考文本：中心高度相近的框算同一行，行内从左到右用空格连接，行与行之间用换行连接。其他字段会原样展示在样本浏览页。
 
 指标定义：
 

@@ -10,6 +10,10 @@
      同名的图片和 .txt 属于同一个样本（.txt 内容为识别文本）。
   参考值（--reference）可以是 jsonl（按 id 合并 ref_image / ref_text），也可以是目录：
   按样本 ID 配对同名的图片和 .txt，找不到时再按文件名（不含目录）配对。
+  文字参考值还可以是 PaddleOCR 格式的标注文件，每行“图片文件名<Tab>文本框 JSON 数组”：
+    xxx.jpg	[{"transcription": "文字", "points": [[x, y], ...], "difficult": false}, ...]
+  按图片文件名（去掉扩展名）与样本配对；忽略 difficult 为 true 或内容为 ### 的框，
+  其余框按阅读顺序（从上到下分行，行内从左到右）拼成参考文本：同一行用空格连接，不同行用换行连接。
 
 输出（--output 目录）：
   - metrics.json      整体指标、每个指标的有效样本数和错误
@@ -220,8 +224,78 @@ def load_records(path):
     return read_jsonl(path), os.path.dirname(os.path.abspath(path))
 
 
+# PaddleOCR 标注中表示“无法辨认、不参与评测”的内容
+IGNORED_TRANSCRIPTIONS = ("###",)
+
+
+def _parse_ocr_label_line(line):
+    """解析标注文件的一行，返回 (图片文件名, 文本框列表)；不是该格式时返回 None。"""
+    name, sep, payload = line.rstrip("\r\n").partition("\t")
+    if not sep or not payload.lstrip().startswith("["):
+        return None
+    try:
+        boxes = json.loads(payload)
+    except ValueError:
+        return None
+    return (name.strip(), boxes) if isinstance(boxes, list) else None
+
+
+def is_ocr_label_file(path):
+    """第一行非空内容是否为“图片文件名<Tab>JSON 数组”。"""
+    if not os.path.isfile(path):
+        return False
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if line.strip():
+                return _parse_ocr_label_line(line) is not None
+    return False
+
+
+def boxes_to_text(boxes):
+    """把文本框按阅读顺序拼成一段文本：中心高度相近的框归为一行，行内按左边界排序。"""
+    items = []
+    for box in boxes:
+        text = box.get("transcription")
+        if box.get("difficult") or text is None or str(text) in IGNORED_TRANSCRIPTIONS:
+            continue
+        points = box.get("points") or [[0, 0]]
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        items.append((min(ys), max(ys), min(xs), str(text)))
+    items.sort(key=lambda b: (b[0] + b[1]) / 2.0)
+    lines = []
+    for top, bottom, left, text in items:
+        center, height = (top + bottom) / 2.0, bottom - top
+        if lines:
+            line = lines[-1]
+            if abs(center - line["center"]) <= max(height, line["height"]) / 2.0:
+                line["boxes"].append((left, text))
+                continue
+        lines.append({"center": center, "height": height, "boxes": [(left, text)]})
+    return "\n".join(" ".join(t for _, t in sorted(line["boxes"])) for line in lines)
+
+
+def load_ocr_labels(path):
+    """读取 PaddleOCR 格式标注文件：去掉扩展名的图片文件名 -> {id, ref_text}。"""
+    labels = {}
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for number, line in enumerate(f, start=1):
+            if not line.strip():
+                continue
+            parsed = _parse_ocr_label_line(line)
+            if parsed is None:
+                raise SystemExit("{} 第 {} 行不是“图片文件名<Tab>JSON 数组”格式".format(path, number))
+            name, boxes = parsed
+            sample_id = os.path.splitext(os.path.basename(name))[0]
+            labels[sample_id] = {"id": sample_id, "ref_text": boxes_to_text(boxes)}
+    return labels
+
+
 def load_references(path):
     """参考值：样本 ID -> {ref_image, ref_text}；目录形式另按文件名建索引用于兜底配对。"""
+    if is_ocr_label_file(path):
+        labels = load_ocr_labels(path)
+        return labels, labels
     records, base_dir = load_records(path)
     by_id, by_name = {}, {}
     from_dir = os.path.isdir(path) and not os.path.isfile(os.path.join(path, PREDICTIONS_FILE))
@@ -342,7 +416,9 @@ def main():
     parser.add_argument("--predictions", required=True, help="结果集目录（或 predictions.jsonl 路径）")
     parser.add_argument("--output", required=True, help="评测输出目录")
     parser.add_argument("--metrics", required=True, help="逗号分隔: " + ",".join(ALL_METRICS))
-    parser.add_argument("--reference", default=None, help="可选，参考值 jsonl 或目录（按文件名配对）")
+    parser.add_argument(
+        "--reference", default=None, help="可选，参考值 jsonl、目录（按文件名配对）或 PaddleOCR 格式的文字标注文件"
+    )
     parser.add_argument("--device", default="cpu", help="LPIPS 使用的设备，如 cpu、cuda、npu")
     args = parser.parse_args()
 
