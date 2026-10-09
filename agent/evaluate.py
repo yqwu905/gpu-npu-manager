@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """推理结果评测脚本，由中心服务作为普通任务在结果所在的服务器上运行。
 
-输入：结果集目录下的 predictions.jsonl，每行一个样本：
-    {"id": "0001", "image": "images/0001.png", "ref_image": "/data/gt/0001.png",
-     "text": "识别结果", "ref_text": "真实文本"}
-  - 相对路径相对于 predictions.jsonl 所在目录。
-  - 参考值也可以放在单独的 jsonl（--reference）里，按 id 合并 ref_image / ref_text 字段。
+输入：结果集目录（--predictions），有两种形式：
+  1. 目录下有 predictions.jsonl，每行一个样本：
+       {"id": "0001", "image": "images/0001.png", "ref_image": "/data/gt/0001.png",
+        "text": "识别结果", "ref_text": "真实文本"}
+     相对路径相对于 predictions.jsonl 所在目录。
+  2. 没有 predictions.jsonl 时扫描目录：每个图片或 .txt 文件是一个样本，样本 ID 为去掉扩展名的相对路径，
+     同名的图片和 .txt 属于同一个样本（.txt 内容为识别文本）。
+  参考值（--reference）可以是 jsonl（按 id 合并 ref_image / ref_text），也可以是目录：
+  按样本 ID 配对同名的图片和 .txt，找不到时再按文件名（不含目录）配对。
 
 输出（--output 目录）：
   - metrics.json      整体指标、每个指标的有效样本数和错误
-  - per_sample.jsonl  逐样本指标，顺序与 predictions.jsonl 相同
+  - per_sample.jsonl  逐样本指标，顺序与输入样本相同
 
 指标：
   图像  psnr、ssim（numpy + Pillow）、lpips（需要 torch 和 lpips 包）
@@ -163,16 +167,84 @@ def resolve(base_dir, path):
     return path if os.path.isabs(path) else os.path.join(base_dir, path)
 
 
+PREDICTIONS_FILE = "predictions.jsonl"
+IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tif", ".tiff")
+TEXT_EXTS = (".txt",)
+# 扫描目录时跳过平台生成的评测输出
+SKIP_DIRS = ("eval",)
+
+
+def scan_samples(directory):
+    """扫描目录里的图片和 .txt，按去掉扩展名的相对路径组成样本，按 ID 排序。
+
+    文本只记录文件路径（text_file），需要内容时用 fill_text 读取。
+    """
+    samples = {}
+    for root, dirs, files in os.walk(directory):
+        rel_root = os.path.relpath(root, directory)
+        dirs[:] = sorted(
+            d for d in dirs if not d.startswith(".") and not (rel_root == "." and d in SKIP_DIRS)
+        )
+        for name in files:
+            stem, ext = os.path.splitext(name)
+            ext = ext.lower()
+            if name.startswith(".") or ext not in IMAGE_EXTS + TEXT_EXTS:
+                continue
+            rel = name if rel_root == "." else os.path.join(rel_root, name)
+            sample_id = os.path.splitext(rel)[0].replace(os.sep, "/")
+            sample = samples.setdefault(sample_id, {"id": sample_id})
+            key = "image" if ext in IMAGE_EXTS else "text_file"
+            sample.setdefault(key, rel.replace(os.sep, "/"))
+    return [samples[k] for k in sorted(samples)]
+
+
+def fill_text(base_dir, record):
+    """把 text_file 指向的文本读到 text 字段。"""
+    if "text_file" in record and "text" not in record:
+        try:
+            with open(resolve(base_dir, record["text_file"]), encoding="utf-8", errors="replace") as f:
+                record["text"] = f.read().strip()
+        except OSError as exc:
+            record["_error"] = "读取 {} 失败: {}".format(record["text_file"], exc)
+    return record
+
+
+def load_records(path):
+    """读取样本，返回 (样本列表, 相对路径的基准目录)。path 可以是目录或 jsonl 文件。"""
+    if os.path.isdir(path):
+        jsonl = os.path.join(path, PREDICTIONS_FILE)
+        if os.path.isfile(jsonl):
+            return read_jsonl(jsonl), os.path.abspath(path)
+        base_dir = os.path.abspath(path)
+        return [fill_text(base_dir, r) for r in scan_samples(base_dir)], base_dir
+    return read_jsonl(path), os.path.dirname(os.path.abspath(path))
+
+
+def load_references(path):
+    """参考值：样本 ID -> {ref_image, ref_text}；目录形式另按文件名建索引用于兜底配对。"""
+    records, base_dir = load_records(path)
+    by_id, by_name = {}, {}
+    from_dir = os.path.isdir(path) and not os.path.isfile(os.path.join(path, PREDICTIONS_FILE))
+    for item in records:
+        if from_dir:
+            # 目录里的文件本身就是参考值
+            item = {"id": item["id"], "ref_image": item.get("image"), "ref_text": item.get("text")}
+            item = {k: v for k, v in item.items() if v is not None}
+        if "ref_image" in item:
+            item["ref_image"] = resolve(base_dir, item["ref_image"])
+        sample_id = str(item.get("id"))
+        by_id[sample_id] = item
+        if from_dir:
+            by_name.setdefault(sample_id.rsplit("/", 1)[-1], []).append(item)
+    # 文件名重复时无法确定配对，不用于兜底
+    return by_id, {k: v[0] for k, v in by_name.items() if len(v) == 1}
+
+
 def evaluate(predictions_path, output_dir, metrics, reference_path=None, device="cpu", log=print):
-    base_dir = os.path.dirname(os.path.abspath(predictions_path))
-    records = read_jsonl(predictions_path)
-    references = {}
+    records, base_dir = load_records(predictions_path)
+    references, references_by_name = {}, {}
     if reference_path:
-        ref_dir = os.path.dirname(os.path.abspath(reference_path))
-        for item in read_jsonl(reference_path):
-            if "ref_image" in item:
-                item["ref_image"] = resolve(ref_dir, item["ref_image"])
-            references[str(item.get("id"))] = item
+        references, references_by_name = load_references(reference_path)
 
     errors = {}
     lpips_model = None
@@ -191,7 +263,10 @@ def evaluate(predictions_path, output_dir, metrics, reference_path=None, device=
 
     for index, record in enumerate(records):
         sample_id = record.get("id", index)
-        merged = dict(references.get(str(sample_id), {}))
+        reference = references.get(str(sample_id))
+        if reference is None:
+            reference = references_by_name.get(str(sample_id).rsplit("/", 1)[-1], {})
+        merged = dict(reference)
         merged.update({k: v for k, v in record.items() if v is not None})
         row = {"id": sample_id}
 
@@ -264,10 +339,10 @@ def evaluate(predictions_path, output_dir, metrics, reference_path=None, device=
 
 def main():
     parser = argparse.ArgumentParser(description="推理结果评测")
-    parser.add_argument("--predictions", required=True, help="predictions.jsonl 路径")
+    parser.add_argument("--predictions", required=True, help="结果集目录（或 predictions.jsonl 路径）")
     parser.add_argument("--output", required=True, help="评测输出目录")
     parser.add_argument("--metrics", required=True, help="逗号分隔: " + ",".join(ALL_METRICS))
-    parser.add_argument("--reference", default=None, help="可选，参考值 jsonl，按 id 合并 ref_image / ref_text")
+    parser.add_argument("--reference", default=None, help="可选，参考值 jsonl 或目录（按文件名配对）")
     parser.add_argument("--device", default="cpu", help="LPIPS 使用的设备，如 cpu、cuda、npu")
     args = parser.parse_args()
 

@@ -31,17 +31,12 @@ METRICS = {
             "description": "1 - 编辑距离 / max(预测长度, 参考长度)，各样本平均"},
 }
 
-PREDICTIONS_FILE = "predictions.jsonl"
 META_FILE = "meta.json"
-
-
-def predictions_path(result: ResultSet) -> str:
-    return posixpath.join(result.path, PREDICTIONS_FILE)
 
 
 def build_command(settings: Settings, result: ResultSet, evaluation: Evaluation, device: str) -> str:
     parts = [
-        "--predictions", predictions_path(result),
+        "--predictions", result.path,
         "--output", evaluation.output_dir,
         "--metrics", ",".join(evaluation.metrics),
         "--device", device,

@@ -284,7 +284,7 @@ class EvaluatorOut(BaseModel):
 
 class ResultSetCreate(BaseModel):
     server_id: int
-    path: str = Field(min_length=1, description="结果集目录在服务器上的绝对路径，目录内需有 predictions.jsonl")
+    path: str = Field(min_length=1, description="结果集目录在服务器上的绝对路径，有 predictions.jsonl 时按它读取样本，否则扫描目录里的图片和 .txt")
     name: str | None = Field(default=None, max_length=255, description="不填时取 meta.json 的 name 或目录名")
     note: str | None = None
     job_id: int | None = Field(default=None, description="产生该结果的任务")
@@ -314,7 +314,7 @@ class SamplePage(BaseModel):
     total: int
     offset: int
     items: list[dict] = Field(
-        description="predictions.jsonl 的原始记录，另加 metrics 字段（该样本的逐样本指标）；"
+        description="predictions.jsonl 的原始记录（没有它时为扫描得到的 id、image、text），另加 metrics 字段（该样本的逐样本指标）；"
         "图片字段为相对路径，用 /api/results/{id}/file?path= 读取"
     )
 
@@ -322,7 +322,7 @@ class SamplePage(BaseModel):
 class EvaluationCreate(BaseModel):
     result_set_id: int
     metrics: list[MetricName] = Field(min_length=1)
-    reference: str | None = Field(default=None, description="可选，参考值 jsonl 在服务器上的路径，按 id 合并 ref_image / ref_text")
+    reference: str | None = Field(default=None, description="可选，服务器上的参考目录（按文件名配对图片和 .txt）或参考值 jsonl（按 id 合并 ref_image / ref_text）")
     num_devices: int = Field(default=0, ge=0, le=8, description="LPIPS 可用 1 张卡加速，其他指标用 0 即可")
     priority: int = Field(default=0, ge=-100, le=100)
     submitter: str | None = None

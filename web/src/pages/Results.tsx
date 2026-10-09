@@ -55,7 +55,7 @@ export default function ResultsPage() {
       <header className="page-head">
         <div className="grow">
           <h1>结果与评测</h1>
-          <div className="lbl" style={{ marginTop: 4 }}>结果集留在产生它的服务器上，通过 Agent 读取；一个结果集是一个含 predictions.jsonl（和可选 meta.json）的目录</div>
+          <div className="lbl" style={{ marginTop: 4 }}>结果集留在产生它的服务器上，通过 Agent 读取；一个结果集是一个目录：有 predictions.jsonl 时按它读取，没有时把目录里的每个图片或 .txt 当作一个样本</div>
         </div>
         <MockBadge show={mock} what="结果与评测" />
         <button className="btn" type="button" onClick={() => setShowReg(true)}>登记结果集</button>
@@ -284,8 +284,8 @@ function EvalDialog({ r, evaluators, onClose, onDone }: { r: ResultSet; evaluato
             </div>
           </div>
         ))}
-        <label className="field"><span className="lbl">参考值文件（可选，服务器上的 jsonl 路径，按 id 合并 ref_image / ref_text）</span>
-          <input className="inp mono" style={{ fontSize: 13 }} placeholder="predictions.jsonl 已带参考值时留空" value={reference} onChange={(e) => setReference(e.target.value)} />
+        <label className="field"><span className="lbl">参考值（可选，服务器上的参考目录，按文件名配对图片和 .txt；也可以是 jsonl，按 id 合并 ref_image / ref_text）</span>
+          <input className="inp mono" style={{ fontSize: 13 }} placeholder="/data/gt，predictions.jsonl 已带参考值时留空" value={reference} onChange={(e) => setReference(e.target.value)} />
         </label>
         <div className="row" style={{ gap: 12 }}>
           <label className="field" style={{ flex: '1 1 0', minWidth: 0 }}><span className="lbl">卡数（0 ~ 8）</span><input className="inp mono" inputMode="numeric" value={devices} onChange={(e) => setDevicesInput(e.target.value)} /></label>
@@ -332,7 +332,7 @@ function RegisterDialog({ onClose, onDone }: { onClose: () => void; onDone: (r: 
         </div>
         <label className="field"><span className="lbl">名称（可选，默认取 meta.json 的 name 或目录名）</span><input className="inp" value={name} onChange={(e) => setName(e.target.value)} /></label>
         <label className="field"><span className="lbl">备注（可选）</span><input className="inp" value={note} onChange={(e) => setNote(e.target.value)} /></label>
-        <div className="notice">登记时读取目录下的 meta.json（可选）并统计 predictions.jsonl 的样本数，文件留在原服务器上。</div>
+        <div className="notice">登记时读取目录下的 meta.json（可选）并统计样本数：有 predictions.jsonl 时按它统计，没有时统计目录里的图片和 .txt（同名的算一个样本）。文件留在原服务器上。</div>
         {err && <div className="notice err">{err}</div>}
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn" onClick={onClose}>取消</button>

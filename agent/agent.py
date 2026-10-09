@@ -12,6 +12,7 @@
 - GET  /v1/files/list?path=    列出白名单目录内的文件
 - GET  /v1/files/raw?path=     读取文件原始内容（图片、json 等）
 - GET  /v1/files/jsonl?path=   分页读取 jsonl 文件
+- GET  /v1/files/samples?path= 分页读取结果集目录的样本（predictions.jsonl，没有时扫描图片和 .txt）
 
 所有请求需带请求头 X-Agent-Token，与启动参数 --token（或环境变量 GNM_AGENT_TOKEN）一致。
 """
@@ -32,6 +33,8 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs, urlparse
+
+from evaluate import PREDICTIONS_FILE, fill_text, scan_samples
 
 AGENT_VERSION = "0.1.0"
 # Agent 所在目录，evaluate.py 与它放在一起
@@ -693,6 +696,8 @@ class JobManager(object):
 
 MAX_RAW_BYTES = 64 * 1024 * 1024
 MAX_JSONL_PAGE = 5000
+# 扫描结果集目录的结果缓存多久（秒），翻页时不必每次都重新扫描
+SCAN_CACHE_SECONDS = 30
 
 
 class FileStore(object):
@@ -704,6 +709,7 @@ class FileStore(object):
     def __init__(self, roots):
         self.roots = [os.path.realpath(os.path.expanduser(r)) for r in roots]
         self._index_cache = {}
+        self._scan_cache = {}
         self._lock = threading.Lock()
 
     def resolve(self, path):
@@ -786,6 +792,28 @@ class FileStore(object):
                     items.append({"_error": "第 {} 条记录不是合法 JSON: {}".format(number, exc)})
         return {"total": len(offsets), "offset": offset, "items": items}
 
+    def read_samples(self, path, offset, limit):
+        """结果集目录的样本：有 predictions.jsonl 时读取它，否则扫描目录里的图片和 .txt。"""
+        real = self.resolve(path)
+        if not os.path.isdir(real):
+            raise JobError(404, "目录不存在")
+        jsonl = os.path.join(real, PREDICTIONS_FILE)
+        if os.path.isfile(jsonl):
+            return self.read_jsonl(jsonl, offset, limit)
+        now = time.monotonic()
+        with self._lock:
+            cached = self._scan_cache.get(real)
+        if cached and now - cached[0] < SCAN_CACHE_SECONDS:
+            samples = cached[1]
+        else:
+            samples = scan_samples(real)
+            with self._lock:
+                self._scan_cache[real] = (now, samples)
+        offset = max(0, offset)
+        limit = max(0, min(limit, MAX_JSONL_PAGE))
+        items = [fill_text(real, dict(s)) for s in samples[offset : offset + limit]]
+        return {"total": len(samples), "offset": offset, "items": items}
+
 
 # ---------------------------------------------------------------------------
 # HTTP 服务
@@ -865,6 +893,10 @@ def make_handler(collector, jobs, files, token):
                     offset = int(query.get("offset", ["0"])[0])
                     limit = int(query.get("limit", ["100"])[0])
                     self._send(200, files.read_jsonl(query.get("path", [""])[0], offset, limit))
+                elif method == "GET" and parts == ["v1", "files", "samples"]:
+                    offset = int(query.get("offset", ["0"])[0])
+                    limit = int(query.get("limit", ["100"])[0])
+                    self._send(200, files.read_samples(query.get("path", [""])[0], offset, limit))
                 else:
                     self._send(404, {"error": "not found"})
             except JobError as exc:

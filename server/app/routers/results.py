@@ -13,7 +13,6 @@ from ..evaluations import (
     evaluation_job,
     latest_metric_sources,
     latest_metrics,
-    predictions_path,
 )
 from ..models import Evaluation, ResultSet, Server
 from ..schemas import (
@@ -122,9 +121,11 @@ async def create_result(body: ResultSetCreate, request: Request):
         raise HTTPException(422, "path 必须是绝对路径")
     agent = _agent(request)
     try:
-        page = await agent.read_jsonl(host, port, posixpath.join(path, "predictions.jsonl"), 0, 0)
+        page = await agent.read_samples(host, port, path, 0, 0)
     except AgentError as exc:
-        raise _agent_error(exc, "读取 predictions.jsonl 失败")
+        raise _agent_error(exc, "读取结果目录失败")
+    if not page["total"]:
+        raise HTTPException(422, "目录里没有 predictions.jsonl，也没有图片或 .txt 文件")
     try:
         meta = await agent.read_json(host, port, posixpath.join(path, META_FILE))
     except AgentError as exc:
@@ -220,9 +221,9 @@ async def result_samples(
         host, port = result.server.host, result.server.port
     agent = _agent(request)
     try:
-        page = await agent.read_jsonl(host, port, predictions_path(result), offset, limit)
+        page = await agent.read_samples(host, port, result.path, offset, limit)
     except AgentError as exc:
-        raise _agent_error(exc, "读取 predictions.jsonl 失败")
+        raise _agent_error(exc, "读取样本失败")
     per_sample = await _per_sample_page(agent, host, port, result, offset, limit)
     items = []
     for index, record in enumerate(page["items"], start=offset):
@@ -333,13 +334,15 @@ def compare_metrics(
     )
 
 
-async def _load_all(agent, host, port, path: str) -> list[dict]:
-    first = await agent.read_jsonl(host, port, path, 0, JSONL_PAGE)
+async def _load_all(agent, host, port, path: str, samples: bool = False) -> list[dict]:
+    """读取 jsonl 文件的全部记录；samples 为 True 时 path 是结果集目录，读取它的样本。"""
+    read = agent.read_samples if samples else agent.read_jsonl
+    first = await read(host, port, path, 0, JSONL_PAGE)
     if first["total"] > MAX_COMPARE_SAMPLES:
         raise HTTPException(422, f"样本数超过 {MAX_COMPARE_SAMPLES}，暂不支持对比")
     items = list(first["items"])
     while len(items) < first["total"]:
-        page = await agent.read_jsonl(host, port, path, len(items), JSONL_PAGE)
+        page = await read(host, port, path, len(items), JSONL_PAGE)
         if not page["items"]:
             break
         items.extend(page["items"])
@@ -349,9 +352,9 @@ async def _load_all(agent, host, port, path: str) -> list[dict]:
 async def _load_samples(agent, result: ResultSet) -> dict[str, dict]:
     host, port = result.server.host, result.server.port
     try:
-        records = await _load_all(agent, host, port, predictions_path(result))
+        records = await _load_all(agent, host, port, result.path, samples=True)
     except AgentError as exc:
-        raise _agent_error(exc, f"读取 {result.name} 的 predictions.jsonl 失败")
+        raise _agent_error(exc, f"读取 {result.name} 的样本失败")
     samples = {}
     for index, record in enumerate(records):
         samples[str(record.get("id", index))] = {**record, "metrics": {}}

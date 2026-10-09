@@ -289,7 +289,7 @@ export interface ResultSetCreate {
   job_id?: number | null
 }
 
-/** predictions.jsonl 的一行原样返回，常用字段 image / ref_image / text / ref_text，另加逐样本指标 */
+/** predictions.jsonl 的一行原样返回（没有它时为扫描到的 image / text），常用字段 image / ref_image / text / ref_text，另加逐样本指标 */
 export interface Sample {
   id?: string | number
   image?: string

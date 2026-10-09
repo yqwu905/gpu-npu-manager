@@ -90,19 +90,21 @@ Agent 会自动检测 `nvidia-smi` 或 `npu-smi`，任务记录和日志保存�
 ```
 model-a/
   meta.json            可选，描述信息，如 {"name": "model-a", "model": "...", "dataset": "...", "params": {...}}
-  predictions.jsonl    每行一个样本
+  predictions.jsonl    可选，每行一个样本
   images/...           图片等文件
   eval/<评测 ID>/      评测输出，由平台生成（metrics.json、per_sample.jsonl）
 ```
 
-`predictions.jsonl` 每行至少有 `id`，评测用到的字段：
+`predictions.jsonl` 是可选的。没有它时，平台扫描目录（跳过 `eval/` 和隐藏文件）：每个图片（png、jpg、jpeg、bmp、webp、tif）或 `.txt` 是一个样本，样本 ID 是去掉扩展名的相对路径，同名的图片和 `.txt` 属于同一个样本，`.txt` 的内容作为识别文本。这时参考值填一个目录，平台按同样的样本 ID 配对其中的图片（`ref_image`）和 `.txt`（`ref_text`），对不上时再按文件名（不含目录）配对。
+
+需要逐样本附加信息时再写 `predictions.jsonl`，每行至少有 `id`，评测用到的字段：
 
 | 字段 | 说明 |
 | --- | --- |
 | `image` / `ref_image` | 预测图与参考图路径，相对路径相对于 predictions.jsonl 所在目录；用于 PSNR、SSIM、LPIPS |
 | `text` / `ref_text` | 识别文本与参考文本；用于 OCR-A、CER、1-NED |
 
-参考值也可以放在单独的 jsonl 里（发起评测时填 `reference`），按 `id` 合并 `ref_image`、`ref_text`。其他字段会原样展示在样本浏览页。
+参考值也可以放在单独的 jsonl 或目录里（发起评测时填 `reference`），jsonl 按 `id` 合并 `ref_image`、`ref_text`。其他字段会原样展示在样本浏览页。
 
 指标定义：
 
