@@ -178,6 +178,7 @@ def test_evaluate_on_eval_server(env):
     assert not (Path(second["output_dir"]) / "lq").exists() and (Path(first["output_dir"]) / "lq").is_dir()
     job = client.get(f"/api/jobs/{second['job_id']}").json()
     assert "--lq-baseline" not in job["command"] and job["assigned_server_id"] == ids["eval-srv"]
+    assert job["env"] == {"PYTHONUNBUFFERED": "1"}
 
     listed = {r["id"]: r for r in client.get("/api/results").json()}
     assert listed[results[1]["id"]]["lq_metrics"] == {"psnr": first["lq_values"]["psnr"]}

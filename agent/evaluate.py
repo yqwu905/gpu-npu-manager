@@ -35,12 +35,15 @@ import json
 import math
 import os
 import sys
+import time
 
 IMAGE_METRICS = ("psnr", "ssim", "lpips")
 TEXT_METRICS = ("ocr_a", "cer", "ned")
 ALL_METRICS = IMAGE_METRICS + TEXT_METRICS
 # 两张图完全相同时 PSNR 为无穷大，按惯例截断为 100 dB
 PSNR_CAP = 100.0
+# 进度日志的最小间隔（秒）
+PROGRESS_SECONDS = 10
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +173,11 @@ class PaddleOcr(object):
         self.v3 = hasattr(PaddleOCR, "predict")
         if self.v3:
             # paddle 的设备名：cpu、gpu:0、npu:0
-            self.engine = PaddleOCR(lang="ch", device=device.replace("cuda", "gpu"))
+            # 默认流水线（paddlex 的 OCR.yaml）会先做文档方向分类和 UVDoc 去扭曲，很慢且会改变图片坐标，评测不需要
+            self.engine = PaddleOCR(
+                lang="ch", device=device.replace("cuda", "gpu"),
+                use_doc_orientation_classify=False, use_doc_unwarping=False,
+            )
         else:
             self.engine = PaddleOCR(
                 lang="ch", use_angle_cls=True, show_log=False,
@@ -378,7 +385,13 @@ def load_lq_images(path):
     return by_id, {k: v[0] for k, v in by_name.items() if len(v) == 1}
 
 
-def evaluate(predictions_path, output_dir, metrics, reference_path=None, device="cpu", log=print,
+def log_flush(message):
+    """输出到任务日志并立即刷新：任务的 stdout 是文件，默认按块缓冲，进度会迟迟看不到。"""
+    print(message)
+    sys.stdout.flush()
+
+
+def evaluate(predictions_path, output_dir, metrics, reference_path=None, device="cpu", log=log_flush,
              lq_path=None, extra=None):
     records, base_dir = load_records(predictions_path)
     if isinstance(reference_path, str):
@@ -388,8 +401,10 @@ def evaluate(predictions_path, output_dir, metrics, reference_path=None, device=
 
     errors = {}
     lpips_model = None
+    log("共 {} 个样本，指标 {}，设备 {}".format(len(records), ",".join(metrics), device))
     if "lpips" in metrics:
         try:
+            log("加载 LPIPS 模型")
             lpips_model = Lpips(device)
         except Exception as exc:  # 缺少依赖或设备不可用
             errors["lpips"] = "LPIPS 初始化失败（需要安装 torch 和 lpips）: {}".format(exc)
@@ -403,6 +418,7 @@ def evaluate(predictions_path, output_dir, metrics, reference_path=None, device=
     cer_length = 0
     skipped = []
     per_sample = []
+    started = last_log = time.time()
 
     for index, record in enumerate(records):
         sample_id = record.get("id", index)
@@ -442,6 +458,7 @@ def evaluate(predictions_path, output_dir, metrics, reference_path=None, device=
             # 没有现成的识别文本，对预测图做 OCR
             if ocr is None and ocr_error is None:
                 try:
+                    log("初始化 PaddleOCR（第一次运行会下载模型到 ~/.paddlex 或 ~/.paddleocr，离线服务器需提前放好）")
                     ocr = PaddleOcr(device)
                 except Exception as exc:
                     ocr_error = "OCR 初始化失败（需要在服务器上安装 paddleocr 和 paddlepaddle）: {}".format(exc)
@@ -472,8 +489,10 @@ def evaluate(predictions_path, output_dir, metrics, reference_path=None, device=
             elif metric == "cer" and metric in row:
                 counts[metric] += 1
         per_sample.append(row)
-        if (index + 1) % 500 == 0:
-            log("已处理 {}/{}".format(index + 1, len(records)))
+        now = time.time()
+        if now - last_log >= PROGRESS_SECONDS or index + 1 == len(records):
+            last_log = now
+            log("已处理 {}/{}，用时 {:.0f} 秒".format(index + 1, len(records), now - started))
 
     summary = {}
     for metric in metrics:
@@ -534,7 +553,7 @@ def main():
         raise SystemExit("未知指标: {}".format(", ".join(unknown)))
     extra = None
     if args.lq and args.lq_baseline:
-        print("计算 LQ 基线指标")
+        log_flush("计算 LQ 基线指标")
         lq = evaluate(args.lq, os.path.join(args.output, "lq"), metrics, args.reference, args.device)
         extra = {"lq": {k: lq[k] for k in ("metrics", "counts", "errors", "num_samples", "num_skipped")}}
     result = evaluate(args.predictions, args.output, metrics, args.reference, args.device, lq_path=args.lq, extra=extra)
