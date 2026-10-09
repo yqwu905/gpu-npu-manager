@@ -52,7 +52,7 @@ Agent 由中心服务通过 SSH 安装和升级，不需要登录各服务器操
 
 Agent 会自动检测 `nvidia-smi` 或 `npu-smi`，任务记录和日志保存在 `~/.gnm-agent/jobs/`。中心服务通过 Agent 读取推理结果，不限制路径，只受 Agent 运行用户（即 SSH 用户）的文件权限约束。
 
-评测脚本以登录用户的 `python3` 执行，需要 `numpy` 和 `Pillow`；LPIPS 另外需要 `torch` 和 `lpips`（首次运行会下载 AlexNet 权重，离线机器需提前放好缓存）。
+评测脚本以登录用户的 `python3` 执行，需要 `numpy` 和 `Pillow`；LPIPS 另外需要 `torch` 和 `lpips`（首次运行会下载 AlexNet 权重，离线机器需提前放好缓存）。评测指定了 GPU/NPU 且装了 `torch` 时，PSNR/SSIM 也在卡上计算，否则用 numpy 在 CPU 上算；OCR 要用 GPU 需要装 `paddlepaddle-gpu`。
 
 > `npu-smi info` 的解析目前基于公开资料中的 910B 和 310P 输出样例，接入真实机器后需要核对一次。
 
