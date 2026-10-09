@@ -57,7 +57,8 @@ def build_command(settings: Settings, result: ResultSet, evaluation: Evaluation,
             parts.append("--lq-baseline")
     # Agent 启动任务时设置 GNM_AGENT_DIR，evaluate.py 与 agent.py 安装在同一目录
     script = shlex.quote(settings.eval_script) if settings.eval_script else '"$GNM_AGENT_DIR/evaluate.py"'
-    return " ".join([shlex.quote(settings.eval_python), script] + [shlex.quote(p) for p in parts])
+    python = evaluation.python or settings.eval_python
+    return " ".join([shlex.quote(python), script] + [shlex.quote(p) for p in parts])
 
 
 def latest_metric_sources(result: ResultSet) -> dict[str, Evaluation]:

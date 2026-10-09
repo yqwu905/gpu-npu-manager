@@ -3266,6 +3266,19 @@
             "description": "LPIPS、OCR 可用 1 张卡加速",
             "default": 0
           },
+          "python": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1024
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Python",
+            "description": "运行评测脚本的 python 解释器，如 /path/to/.venv/bin/python；为空时用中心服务的 GNM_EVAL_PYTHON（默认 python3）"
+          },
           "note": {
             "anyOf": [
               {
@@ -3377,6 +3390,19 @@
             "title": "Num Devices",
             "description": "LPIPS、OCR 可用 1 张卡加速",
             "default": 0
+          },
+          "python": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1024
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Python",
+            "description": "运行评测脚本的 python 解释器，如 /path/to/.venv/bin/python；为空时用中心服务的 GNM_EVAL_PYTHON（默认 python3）"
           },
           "note": {
             "anyOf": [
@@ -3535,6 +3561,18 @@
             ],
             "title": "Num Devices"
           },
+          "python": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1024
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Python"
+          },
           "note": {
             "anyOf": [
               {
@@ -3675,6 +3713,19 @@
             "title": "Num Devices",
             "description": "LPIPS 可用 1 张卡加速，其他指标用 0 即可；不填时取配置中的值或 0"
           },
+          "python": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1024
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Python",
+            "description": "运行评测脚本的 python 解释器，如 /path/to/.venv/bin/python；为空时用中心服务的 GNM_EVAL_PYTHON（默认 python3）"
+          },
           "priority": {
             "type": "integer",
             "maximum": 100.0,
@@ -3786,6 +3837,18 @@
               }
             ],
             "title": "Lq Dir"
+          },
+          "python": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Python",
+            "description": "运行评测脚本的 python，为空时用 GNM_EVAL_PYTHON"
           },
           "server_id": {
             "type": "integer",

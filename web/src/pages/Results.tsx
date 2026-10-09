@@ -341,6 +341,7 @@ function EvalDialog({ r, evaluators, onClose, onDone }: { r: ResultSet; evaluato
   const [picked, setPicked] = useState<string[] | null>(null)
   const [reference, setReference] = useState('')
   const [devicesInput, setDevicesInput] = useState<string | null>(null)
+  const [pythonInput, setPythonInput] = useState<string | null>(null)
   const [priority, setPriority] = useState('0')
   const [submitter, setSubmitter] = useState(() => localStorage.getItem('gnm.submitter') ?? '')
   const [err, setErr] = useState<string | null>(null)
@@ -353,7 +354,7 @@ function EvalDialog({ r, evaluators, onClose, onDone }: { r: ResultSet; evaluato
   // 没手动填卡数时取配置中的卡数；选了 LPIPS 默认用 1 张卡
   const devices = devicesInput ?? String(config ? config.num_devices : chosen.includes('lpips') ? 1 : 0)
   const toggle = (name: string) => setPicked(chosen.includes(name) ? chosen.filter((x) => x !== name) : [...chosen, name])
-  const pickConfig = (id: string) => { setConfigId(id); setPicked(null); setDevicesInput(null) }
+  const pickConfig = (id: string) => { setConfigId(id); setPicked(null); setDevicesInput(null); setPythonInput(null) }
 
   const submit = async () => {
     setErr(null)
@@ -362,7 +363,7 @@ function EvalDialog({ r, evaluators, onClose, onDone }: { r: ResultSet; evaluato
       localStorage.setItem('gnm.submitter', submitter)
       await resultsApi.evaluate({
         result_set_id: r.id, config_id: config?.id ?? null, metrics: chosen, reference: reference.trim() || null,
-        num_devices: Number(devices) || 0, priority: Math.max(-100, Math.min(100, Number(priority) || 0)), submitter: submitter.trim() || null,
+        num_devices: Number(devices) || 0, python: pythonInput === null ? undefined : pythonInput.trim() || null, priority: Math.max(-100, Math.min(100, Number(priority) || 0)), submitter: submitter.trim() || null,
       })
       onDone()
     } catch (e) {
@@ -403,6 +404,10 @@ function EvalDialog({ r, evaluators, onClose, onDone }: { r: ResultSet; evaluato
           <label className="field" style={{ flex: '1 1 0', minWidth: 0 }}><span className="lbl">优先级（-100 ~ 100）</span><input className="inp mono" inputMode="numeric" value={priority} onChange={(e) => setPriority(e.target.value)} /></label>
           <label className="field" style={{ flex: '1 1 0', minWidth: 0 }}><span className="lbl">提交人</span><input className="inp" value={submitter} onChange={(e) => setSubmitter(e.target.value)} /></label>
         </div>
+        <label className="field"><span className="lbl">Python 解释器（可选，评测服务器上装了 torch、lpips、paddleocr 等依赖的环境）</span>
+          <input className="inp mono" style={{ fontSize: 13 }} placeholder="默认 python3，如 /path/to/.venv/bin/python"
+            value={pythonInput ?? config?.python ?? ''} onChange={(e) => setPythonInput(e.target.value)} />
+        </label>
         <div className="notice">提交后作为任务进入队列。LPIPS 和需要 OCR 的文字指标（样本只有图片、没有识别文本时会用 PaddleOCR 识别）可以用 1 张卡加速，其他指标用 0 张卡即可。</div>
         {err && <div className="notice err">{err}</div>}
         <div className="row" style={{ justifyContent: 'flex-end' }}>
@@ -563,7 +568,7 @@ function ProjectsDialog({ onClose }: { onClose: () => void }) {
   )
 }
 
-const EMPTY_CONFIG: EvalConfigBody = { name: '', metrics: [], label_file: null, gt_dir: null, lq_dir: null, server_id: null, server_path: null, num_devices: 0, note: null }
+const EMPTY_CONFIG: EvalConfigBody = { name: '', metrics: [], label_file: null, gt_dir: null, lq_dir: null, server_id: null, server_path: null, num_devices: 0, python: null, note: null }
 
 function ConfigsDialog({ evaluators, onClose }: { evaluators: Evaluator[]; onClose: () => void }) {
   const configs = usePoll(() => resultsApi.configs(), [], 0)
@@ -575,7 +580,7 @@ function ConfigsDialog({ evaluators, onClose }: { evaluators: Evaluator[]; onClo
   const open = (c: EvalConfig | null) => {
     setErr(null)
     setEditing(c?.id ?? null)
-    setForm(c ? { name: c.name, metrics: c.metrics, label_file: c.label_file, gt_dir: c.gt_dir, lq_dir: c.lq_dir, server_id: c.server_id, server_path: c.server_path, num_devices: c.num_devices, note: c.note } : { ...EMPTY_CONFIG })
+    setForm(c ? { name: c.name, metrics: c.metrics, label_file: c.label_file, gt_dir: c.gt_dir, lq_dir: c.lq_dir, server_id: c.server_id, server_path: c.server_path, num_devices: c.num_devices, python: c.python, note: c.note } : { ...EMPTY_CONFIG })
   }
   const save = async () => {
     if (!form) return
@@ -649,6 +654,9 @@ function ConfigsDialog({ evaluators, onClose }: { evaluators: Evaluator[]; onClo
               <input className="inp mono" style={{ fontSize: 13 }} placeholder="/data/eval" disabled={!form.server_id} value={form.server_path ?? ''} onChange={(e) => set({ server_path: e.target.value })} />
             </label>
           </div>
+          <label className="field"><span className="lbl">Python 解释器（可选，评测服务器上装了 torch、lpips、paddleocr 等依赖的环境，不填用 python3）</span>
+            <input className="inp mono" style={{ fontSize: 13 }} placeholder="/path/to/.venv/bin/python" value={form.python ?? ''} onChange={(e) => set({ python: e.target.value })} />
+          </label>
           <div className="row" style={{ gap: 12 }}>
             <label className="field" style={{ flex: '1 1 0', minWidth: 0 }}><span className="lbl">卡数（0 ~ 8）</span>
               <input className="inp mono" inputMode="numeric" value={form.num_devices} onChange={(e) => set({ num_devices: Math.max(0, Math.min(8, Number(e.target.value) || 0)) })} />
