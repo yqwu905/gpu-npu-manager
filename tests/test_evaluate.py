@@ -34,6 +34,16 @@ def test_psnr_matches_skimage_and_caps():
     assert evaluate.psnr(ref, ref) == evaluate.PSNR_CAP
 
 
+@pytest.mark.parametrize("seed", [0, 1])
+def test_torch_metrics_match_numpy(seed):
+    pytest.importorskip("torch")
+    pred, ref = random_pair(seed)
+    values = evaluate.TorchImageMetrics("cpu")(pred, ref, ["psnr", "ssim"])
+    assert values["ssim"] == pytest.approx(evaluate.ssim(pred, ref), abs=1e-5)
+    assert values["psnr"] == pytest.approx(evaluate.psnr(pred, ref), abs=1e-4)
+    assert evaluate.TorchImageMetrics("cpu")(ref, ref, ["psnr"]) == {"psnr": evaluate.PSNR_CAP}
+
+
 def test_text_metrics():
     assert evaluate.edit_distance("kitten", "sitting") == 3
     assert evaluate.edit_distance("", "abc") == 3
