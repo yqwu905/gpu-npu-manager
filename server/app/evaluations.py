@@ -28,11 +28,11 @@ METRICS = {
     "lpips": {"label": "LPIPS", "kind": "image", "unit": None, "higher_is_better": False,
               "description": "感知距离（AlexNet），需要服务器上安装 torch 和 lpips"},
     "ocr_a": {"label": "OCR-A", "kind": "text", "unit": None, "higher_is_better": True,
-              "description": "识别文本与参考文本完全一致的样本比例"},
+              "description": "识别文本与参考文本完全一致的区域占比（标注文件的每个框是一个区域，否则每个样本是一个区域）"},
     "cer": {"label": "CER", "kind": "text", "unit": None, "higher_is_better": False,
             "description": "字符错误率，总编辑距离 / 参考文本总字符数"},
     "ned": {"label": "1-NED", "kind": "text", "unit": None, "higher_is_better": True,
-            "description": "1 - 编辑距离 / max(预测长度, 参考长度)，各样本平均"},
+            "description": "1 - 编辑距离 / max(预测长度, 参考长度)，各区域平均"},
 }
 
 META_FILE = "meta.json"
