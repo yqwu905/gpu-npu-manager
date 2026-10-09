@@ -45,7 +45,7 @@ Agent 由中心服务通过 SSH 安装和升级，不需要登录各服务器操
 1. 在中心主机上准备 SSH 密钥（`ssh-keygen`），用 `ssh-copy-id <用户>@<服务器>` 把公钥分发到各服务器；页面“添加服务器”对话框里也会显示中心主机的公钥。
 2. 在“服务器”页点“添加服务器”，单台填写地址和 SSH 用户；或切到“批量”，每行一台：`[用户@]地址[:SSH端口] [名称]`；或切到“从 SSH 配置导入”，勾选中心主机 `~/.ssh/config` 里的 Host。导入的服务器以 Host 别名作为名称和 SSH 连接目标，沿用 config 中的密钥、跳板机等设置，Agent 地址取 HostName。
 3. 中心服务登录后把 `agent.py`、`evaluate.py` 写到该用户的 `~/.gnm-agent/bin/`，启动 Agent 并用 crontab `@reboot` 设置开机自启。不需要 root，任务以该 SSH 用户运行。安装进度、错误和完整输出在服务器详情的“Agent”页。
-4. 中心服务默认通过 SSH 端口转发访问 Agent（为每台服务器维持一个 `ssh -N -L` 进程，断开后自动重建），Agent 只监听服务器本机，防火墙不需要放通 Agent 端口。个别服务器可以在“属性”里关闭转发，改为直接连接 Agent 端口（关闭后需要重新安装 Agent）。
+4. 中心服务默认通过 SSH 端口转发访问 Agent（为每台服务器维持一个 `ssh -N -L` 进程，断开后自动重建），Agent 只监听服务器本机，防火墙不需要放通 Agent 端口。如果服务器的 sshd 禁止端口转发（`AllowTcpForwarding no`，openEuler 等系统默认如此），会自动改为经 SSH 会话中继（由服务器上的 `python3` 连接 Agent，并复用 SSH 连接），不需要改 sshd 配置。个别服务器可以在“属性”里关闭转发，改为直接连接 Agent 端口（关闭后需要重新安装 Agent）。
 5. 中心服务升级后，版本落后的托管 Agent 会自动升级一次（`GNM_AUTO_UPGRADE=0` 可关闭）；也可以在页面上逐台或一键升级。升级只重启 Agent 进程，运行中的任务不受影响。
 
 服务器需要有 `python3`（3.7+）、`bash` 和 `base64`；关闭 SSH 转发或手动安装 Agent 时，中心主机要能直接访问 Agent 端口（默认 9100）。命令不在 PATH 中时，可在服务器的 `~/.gnm-agent/agent.local.env` 里写 `export GNM_NPU_SMI=/path/to/npu-smi`（升级不会覆盖），然后在页面上重新安装。

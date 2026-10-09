@@ -32,6 +32,7 @@ class AgentClient:
         return httpx.AsyncClient(timeout=self.settings.agent_timeout, headers=headers, transport=self.transport)
 
     async def _send(self, method: str, host: str, port: int, path: str, **kwargs) -> httpx.Response:
+        key = (host, port)
         if self.tunnels is not None:
             try:
                 host, port = await self.tunnels.endpoint(host, port)
@@ -41,7 +42,11 @@ class AgentClient:
             async with self._client() as client:
                 resp = await client.request(method, f"http://{host}:{port}{path}", **kwargs)
         except httpx.HTTPError as exc:
-            raise AgentError(f"无法连接 Agent: {type(exc).__name__} {exc}".strip()) from exc
+            message = f"无法连接 Agent: {type(exc).__name__} {exc}".strip()
+            hint = self.tunnels.hint(*key) if self.tunnels is not None else None
+            if hint:
+                message += f"（SSH：{hint}）"
+            raise AgentError(message) from exc
         if resp.status_code >= 400:
             try:
                 message = resp.json().get("error") or resp.text
