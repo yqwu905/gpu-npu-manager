@@ -10,10 +10,17 @@
      同名的图片和 .txt 属于同一个样本（.txt 内容为识别文本）。
   参考值（--reference）可以是 jsonl（按 id 合并 ref_image / ref_text），也可以是目录：
   按样本 ID 配对同名的图片和 .txt，找不到时再按文件名（不含目录）配对。
+  文字参考值还可以是 PaddleOCR 格式的标注文件，每行“图片文件名<Tab>文本框 JSON 数组”：
+    xxx.jpg	[{"transcription": "文字", "points": [[x, y], ...], "difficult": false}, ...]
+  按图片文件名（去掉扩展名）与样本配对；忽略 difficult 为 true 或内容为 ### 的框，
+  其余框按阅读顺序（从上到下分行，行内从左到右）拼成参考文本：同一行用空格连接，不同行用换行连接。
+  样本没有识别文本（text）但有预测图时，用 PaddleOCR（pip 包 paddleocr，2.x 和 3.x 均可）对预测图做
+  检测和识别，识别出的框按同样的规则拼成文本；结果另存为输出目录下的 ocr_results.txt（标注文件格式）。
 
 输出（--output 目录）：
   - metrics.json      整体指标、每个指标的有效样本数和错误
   - per_sample.jsonl  逐样本指标，顺序与输入样本相同
+  - ocr_results.txt   做了 OCR 时的识别结果，每行“图片路径<Tab>文本框 JSON 数组”
 
 指标：
   图像  psnr、ssim（numpy + Pillow）、lpips（需要 torch 和 lpips 包）
@@ -146,6 +153,39 @@ class Lpips(object):
             return float(self.model(to_tensor(pred), to_tensor(ref)).item())
 
 
+class PaddleOcr(object):
+    """用 PaddleOCR 检测并识别图片中的文字，返回 [{"transcription", "points"}, ...]。
+
+    兼容 paddleocr 3.x（PaddleOCR.predict，结果字段 rec_texts / rec_polys）和
+    2.x（PaddleOCR.ocr，结果为 [[框, (文本, 置信度)], ...]，没有文字时为 None）。
+    """
+
+    def __init__(self, device):
+        from paddleocr import PaddleOCR  # 需要 pip install paddleocr 及对应的 paddlepaddle
+
+        self.v3 = hasattr(PaddleOCR, "predict")
+        if self.v3:
+            # paddle 的设备名：cpu、gpu:0、npu:0
+            self.engine = PaddleOCR(lang="ch", device=device.replace("cuda", "gpu"))
+        else:
+            self.engine = PaddleOCR(
+                lang="ch", use_angle_cls=True, show_log=False,
+                use_gpu=device.startswith("cuda"), use_npu=device.startswith("npu"),
+            )
+
+    def __call__(self, path):
+        if self.v3:
+            result = self.engine.predict(path)[0]
+            pairs = zip(result["rec_texts"], result["rec_polys"])
+        else:
+            page = self.engine.ocr(path, cls=True)[0] or []
+            pairs = ((text, box) for box, (text, _score) in page)
+        return [
+            {"transcription": str(text), "points": [[int(x), int(y)] for x, y in poly], "difficult": False}
+            for text, poly in pairs
+        ]
+
+
 # ---------------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------------
@@ -220,8 +260,78 @@ def load_records(path):
     return read_jsonl(path), os.path.dirname(os.path.abspath(path))
 
 
+# PaddleOCR 标注中表示“无法辨认、不参与评测”的内容
+IGNORED_TRANSCRIPTIONS = ("###",)
+
+
+def _parse_ocr_label_line(line):
+    """解析标注文件的一行，返回 (图片文件名, 文本框列表)；不是该格式时返回 None。"""
+    name, sep, payload = line.rstrip("\r\n").partition("\t")
+    if not sep or not payload.lstrip().startswith("["):
+        return None
+    try:
+        boxes = json.loads(payload)
+    except ValueError:
+        return None
+    return (name.strip(), boxes) if isinstance(boxes, list) else None
+
+
+def is_ocr_label_file(path):
+    """第一行非空内容是否为“图片文件名<Tab>JSON 数组”。"""
+    if not os.path.isfile(path):
+        return False
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if line.strip():
+                return _parse_ocr_label_line(line) is not None
+    return False
+
+
+def boxes_to_text(boxes):
+    """把文本框按阅读顺序拼成一段文本：中心高度相近的框归为一行，行内按左边界排序。"""
+    items = []
+    for box in boxes:
+        text = box.get("transcription")
+        if box.get("difficult") or text is None or str(text) in IGNORED_TRANSCRIPTIONS:
+            continue
+        points = box.get("points") or [[0, 0]]
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        items.append((min(ys), max(ys), min(xs), str(text)))
+    items.sort(key=lambda b: (b[0] + b[1]) / 2.0)
+    lines = []
+    for top, bottom, left, text in items:
+        center, height = (top + bottom) / 2.0, bottom - top
+        if lines:
+            line = lines[-1]
+            if abs(center - line["center"]) <= max(height, line["height"]) / 2.0:
+                line["boxes"].append((left, text))
+                continue
+        lines.append({"center": center, "height": height, "boxes": [(left, text)]})
+    return "\n".join(" ".join(t for _, t in sorted(line["boxes"])) for line in lines)
+
+
+def load_ocr_labels(path):
+    """读取 PaddleOCR 格式标注文件：去掉扩展名的图片文件名 -> {id, ref_text}。"""
+    labels = {}
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for number, line in enumerate(f, start=1):
+            if not line.strip():
+                continue
+            parsed = _parse_ocr_label_line(line)
+            if parsed is None:
+                raise SystemExit("{} 第 {} 行不是“图片文件名<Tab>JSON 数组”格式".format(path, number))
+            name, boxes = parsed
+            sample_id = os.path.splitext(os.path.basename(name))[0]
+            labels[sample_id] = {"id": sample_id, "ref_text": boxes_to_text(boxes)}
+    return labels
+
+
 def load_references(path):
     """参考值：样本 ID -> {ref_image, ref_text}；目录形式另按文件名建索引用于兜底配对。"""
+    if is_ocr_label_file(path):
+        labels = load_ocr_labels(path)
+        return labels, labels
     records, base_dir = load_records(path)
     by_id, by_name = {}, {}
     from_dir = os.path.isdir(path) and not os.path.isfile(os.path.join(path, PREDICTIONS_FILE))
@@ -253,6 +363,9 @@ def evaluate(predictions_path, output_dir, metrics, reference_path=None, device=
             lpips_model = Lpips(device)
         except Exception as exc:  # 缺少依赖或设备不可用
             errors["lpips"] = "LPIPS 初始化失败（需要安装 torch 和 lpips）: {}".format(exc)
+    ocr = None
+    ocr_error = None
+    ocr_lines = []
 
     sums = {m: 0.0 for m in metrics}
     counts = {m: 0 for m in metrics}
@@ -287,7 +400,23 @@ def evaluate(predictions_path, output_dir, metrics, reference_path=None, device=
                 skipped.append({"id": sample_id, "error": "图像指标: {}".format(exc)})
 
         wants_text = any(m in metrics for m in TEXT_METRICS)
-        if wants_text and merged.get("ref_text") is not None:
+        needs_ocr = wants_text and merged.get("ref_text") is not None and merged.get("text") is None and merged.get("image")
+        if needs_ocr:
+            # 没有现成的识别文本，对预测图做 OCR
+            if ocr is None and ocr_error is None:
+                try:
+                    ocr = PaddleOcr(device)
+                except Exception as exc:
+                    ocr_error = "OCR 初始化失败（需要在服务器上安装 paddleocr 和 paddlepaddle）: {}".format(exc)
+            if ocr is not None:
+                try:
+                    boxes = ocr(resolve(base_dir, merged["image"]))
+                    merged["text"] = boxes_to_text(boxes)
+                    ocr_lines.append(merged["image"] + "\t" + json.dumps(boxes, ensure_ascii=False))
+                except Exception as exc:
+                    skipped.append({"id": sample_id, "error": "OCR: {}".format(exc)})
+        # OCR 不可用或失败的样本不计入文字指标
+        if wants_text and merged.get("ref_text") is not None and not (needs_ocr and merged.get("text") is None):
             distance, ref_len, exact, ned = text_scores(str(merged.get("text") or ""), str(merged["ref_text"]))
             cer_distance += distance
             cer_length += ref_len
@@ -320,6 +449,13 @@ def evaluate(predictions_path, output_dir, metrics, reference_path=None, device=
 
     if not os.path.isdir(output_dir):
         os.makedirs(output_dir)
+    if ocr_error:
+        for metric in metrics:
+            if metric in TEXT_METRICS and counts[metric] == 0:
+                errors[metric] = ocr_error
+    if ocr_lines:
+        with open(os.path.join(output_dir, "ocr_results.txt"), "w", encoding="utf-8") as f:
+            f.write("\n".join(ocr_lines) + "\n")
     with open(os.path.join(output_dir, "per_sample.jsonl"), "w", encoding="utf-8") as f:
         for row in per_sample:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -342,7 +478,9 @@ def main():
     parser.add_argument("--predictions", required=True, help="结果集目录（或 predictions.jsonl 路径）")
     parser.add_argument("--output", required=True, help="评测输出目录")
     parser.add_argument("--metrics", required=True, help="逗号分隔: " + ",".join(ALL_METRICS))
-    parser.add_argument("--reference", default=None, help="可选，参考值 jsonl 或目录（按文件名配对）")
+    parser.add_argument(
+        "--reference", default=None, help="可选，参考值 jsonl、目录（按文件名配对）或 PaddleOCR 格式的文字标注文件"
+    )
     parser.add_argument("--device", default="cpu", help="LPIPS 使用的设备，如 cpu、cuda、npu")
     args = parser.parse_args()
 

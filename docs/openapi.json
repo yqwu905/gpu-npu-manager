@@ -2837,7 +2837,7 @@
               }
             ],
             "title": "Reference",
-            "description": "可选，服务器上的参考目录（按文件名配对图片和 .txt）或参考值 jsonl（按 id 合并 ref_image / ref_text）"
+            "description": "可选，服务器上的参考目录（按文件名配对图片和 .txt）、参考值 jsonl（按 id 合并 ref_image / ref_text），或 PaddleOCR 格式的文字标注文件"
           },
           "num_devices": {
             "type": "integer",

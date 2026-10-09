@@ -364,7 +364,7 @@
 {"result_set_id": 7, "metrics": ["psnr", "ssim", "ocr_a", "cer", "ned"], "reference": null, "num_devices": 0, "priority": 0, "submitter": "alice"}
 ```
 
-`reference` 可选，是服务器上的参考目录（按文件名配对图片和 `.txt`）或参考值 jsonl 的路径。`num_devices` 默认 0；LPIPS 可以给 1 张卡加速。返回 `EvaluationOut`：
+`reference` 可选，是服务器上的参考目录（按文件名配对图片和 `.txt`）、参考值 jsonl，或 PaddleOCR 格式的文字标注文件（每行“图片文件名<Tab>文本框 JSON 数组”，见 README）的路径。样本没有识别文本时，文字指标会先用 PaddleOCR 识别预测图。`num_devices` 默认 0；LPIPS 和 OCR 可以给 1 张卡加速。返回 `EvaluationOut`：
 
 ```json
 {
