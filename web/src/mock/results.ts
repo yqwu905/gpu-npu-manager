@@ -1,6 +1,7 @@
 // 后端缺少推理结果与评测接口时使用的示例数据，内容与前端设计稿一致，结构与后端接口一致
 import type {
-  CompareMetrics, CompareSampleItem, CompareSamples, CompareSort, Evaluation, EvaluationCreate, Evaluator, ResultSet, ResultSetCreate, Sample, SamplePage,
+  CompareMetrics, CompareSampleItem, CompareSamples, CompareSort, EvalConfig, EvalConfigBody, Evaluation, EvaluationCreate, Evaluator, Project,
+  ResultFilters, ResultSet, ResultSetCreate, ResultSetUpdate, Sample, SamplePage, TagCount,
 } from '../api/types'
 
 const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString()
@@ -13,11 +14,30 @@ function rs(
   sample_count: number, job_id: number | null, metrics: Record<string, number>, evaluating: boolean, params: string,
 ): ResultSet {
   kindOf.set(id, kind)
+  const project = projectList.find((p) => p.id === (kind === 'image' ? 1 : 2))!
   return {
     id, name, server_id: server[0], server_name: server[1], path, sample_count, job_id, metrics, evaluating, note: null,
+    project_id: project.id, project_name: project.name, tags: id % 2 ? ['v1'] : ['v2', '发布候选'], lq_metrics: kind === 'image' && Object.keys(metrics).length ? { psnr: 24.9, ssim: 0.702 } : {},
     meta: { model, dataset, params }, created_at: ago(id * 30),
   }
 }
+
+let projectList: Project[] = [
+  { id: 1, name: '超分辨率', description: 'DIV2K 等超分实验', result_count: 0, created_at: ago(9000) },
+  { id: 2, name: '票据 OCR', description: null, result_count: 0, created_at: ago(8000) },
+]
+
+let configs: EvalConfig[] = [
+  {
+    id: 1, name: 'DIV2K ×4 标准评测', metrics: ['psnr', 'ssim', 'lpips'], label_file: null, gt_dir: '/data/datasets/DIV2K/valid_HR',
+    lq_dir: '/data/datasets/DIV2K/valid_LR_x4', server_id: 4, server_name: 'gpu-l40s-01', server_path: '/data/eval', num_devices: 1, note: null,
+    created_at: ago(5000), updated_at: ago(5000),
+  },
+  {
+    id: 2, name: '票据 v2 OCR', metrics: ['ocr_a', 'cer', 'ned'], label_file: '/data/datasets/bills-v2/Label.txt', gt_dir: null, lq_dir: null,
+    server_id: null, server_name: null, server_path: null, num_devices: 1, note: '在结果所在服务器上评测', created_at: ago(4000), updated_at: ago(4000),
+  },
+]
 
 let sets: ResultSet[] = [
   rs(1, 'image', 'sr-x4-baseline', 'EDSR-baseline', 'DIV2K-val ×4', [5, 'gpu-l40s-02'], '/data/results/sr-x4-baseline', 100, 1270, { psnr: 28.41, ssim: 0.812, lpips: 0.214 }, false, 'scale=4, tile=512'),
@@ -40,8 +60,11 @@ const EVALUATORS: Evaluator[] = [
 ]
 
 function ev(id: number, setId: number, metrics: string[], job_id: number, status: Evaluation['status'], values: Record<string, number | null> | null, error: string | null, min: number): Evaluation {
+  const s = findSet(setId)
   return {
-    id, result_set_id: setId, result_set_name: findSet(setId).name, metrics, reference: null, job_id, job_status: status === 'pending' ? 'queued' : status,
+    id, result_set_id: setId, result_set_name: s.name, metrics, reference: null, config_id: null, config_name: null, label_file: null, gt_dir: null, lq_dir: null,
+    server_id: s.server_id, server_name: s.server_name, data_path: s.path, output_dir: `${s.path}/eval/${id}`, compute_lq: false, lq_source_id: null,
+    lq_values: null, lq_counts: null, lq_errors: null, job_id, job_status: status === 'pending' ? 'queued' : status,
     status, values, counts: null, errors: null, num_skipped: values ? 0 : null, error, created_at: ago(min), finished_at: status === 'succeeded' || status === 'failed' ? ago(min - 3) : null,
   }
 }
@@ -96,15 +119,59 @@ function sampleOf(s: ResultSet, sid: string, i: number): Sample {
   if (kindOf.get(s.id) === 'image') {
     const vals = IMG_PSNR[sid]
     const p = vals ? vals[(s.id - 1) % 3] : (s.metrics.psnr ?? 28) - 2 + ((Number(sid) * 7) % 10) / 2.5
-    return { id: sid, image: `images/${sid}.png`, ref_image: `/data/datasets/DIV2K/valid_HR/${sid}.png`, metrics: evaluated(s) ? imageMetrics(+p.toFixed(2)) : {} }
+    return {
+      id: sid, image: `images/${sid}.png`, ref_image: `/data/datasets/DIV2K/valid_HR/${sid}.png`, metrics: evaluated(s) ? imageMetrics(+p.toFixed(2)) : {},
+      ...(evaluated(s) ? { lq_image: `/data/datasets/DIV2K/valid_LR_x4/${sid}.png`, media: { lq_image: 3 } } : {}),
+    }
   }
   const t = TEXTS.find((x) => x[0] === sid) ?? TEXTS[i % TEXTS.length]
   const pred = t[2][(s.id - 6) % 3] ?? t[1]
   return { id: sid, image: `crops/${sid}.png`, text: pred, ref_text: t[1], metrics: evaluated(s) ? textMetrics(pred, t[1]) : {} }
 }
 
+const withCounts = () => projectList.map((p) => ({ ...p, result_count: sets.filter((s) => s.project_id === p.id).length }))
+
 export const mockResults = {
-  list: () => sets,
+  list: (f: ResultFilters = {}) => sets.filter((s) =>
+    (f.project_id === undefined || (s.project_id ?? 0) === f.project_id) &&
+    (f.tag ?? []).every((t) => s.tags.includes(t)) &&
+    (!f.q || `${s.name} ${s.path} ${s.note ?? ''}`.toLowerCase().includes(f.q.toLowerCase()))),
+  update(id: number, body: ResultSetUpdate): ResultSet {
+    sets = sets.map((s) => (s.id === id ? { ...s, ...body, project_name: projectList.find((p) => p.id === ('project_id' in body ? body.project_id : s.project_id))?.name ?? null } : s))
+    return findSet(id)
+  },
+  tags(): TagCount[] {
+    const counts = new Map<string, number>()
+    sets.forEach((s) => s.tags.forEach((t) => counts.set(t, (counts.get(t) ?? 0) + 1)))
+    return [...counts].map(([tag, count]) => ({ tag, count }))
+  },
+  projects: withCounts,
+  createProject(body: { name: string; description?: string | null }): Project {
+    const p = { id: Math.max(0, ...projectList.map((x) => x.id)) + 1, name: body.name, description: body.description ?? null, result_count: 0, created_at: ago(0) }
+    projectList = [...projectList, p]
+    return p
+  },
+  updateProject(id: number, body: { name?: string; description?: string | null }): Project {
+    projectList = projectList.map((p) => (p.id === id ? { ...p, ...body } : p))
+    return withCounts().find((p) => p.id === id)!
+  },
+  deleteProject(id: number) {
+    projectList = projectList.filter((p) => p.id !== id)
+    sets = sets.map((s) => (s.project_id === id ? { ...s, project_id: null, project_name: null } : s))
+  },
+  configs: () => configs,
+  saveConfig(id: number | null, body: Partial<EvalConfigBody>): EvalConfig {
+    if (id === null) {
+      const c = { ...(body as EvalConfigBody), id: Math.max(0, ...configs.map((x) => x.id)) + 1, server_name: body.server_id ? `服务器 ${body.server_id}` : null, created_at: ago(0), updated_at: ago(0) }
+      configs = [...configs, c]
+      return c
+    }
+    configs = configs.map((c) => (c.id === id ? { ...c, ...body, updated_at: ago(0) } : c))
+    return configs.find((c) => c.id === id)!
+  },
+  deleteConfig(id: number) {
+    configs = configs.filter((c) => c.id !== id)
+  },
   create(body: ResultSetCreate): ResultSet {
     const name = body.name?.trim() || body.path.split('/').filter(Boolean).pop() || 'result'
     const s = rs(sets.length + 1, 'image', name, '-', '-', [body.server_id, `服务器 ${body.server_id}`], body.path, 0, body.job_id ?? null, {}, false, '')
@@ -119,7 +186,9 @@ export const mockResults = {
   evaluators: () => EVALUATORS,
   evaluations: (resultSetId?: number) => evaluations.filter((e) => resultSetId === undefined || e.result_set_id === resultSetId),
   evaluate(body: EvaluationCreate): Evaluation {
-    const e = ev(Math.max(...evaluations.map((x) => x.id)) + 1, body.result_set_id, body.metrics, 1299, 'pending', null, null, 0)
+    const config = configs.find((c) => c.id === body.config_id)
+    const e = ev(Math.max(...evaluations.map((x) => x.id)) + 1, body.result_set_id, body.metrics ?? config?.metrics ?? [], 1299, config?.server_id ? 'copying' : 'pending', null, null, 0)
+    if (config) Object.assign(e, { config_id: config.id, config_name: config.name, lq_dir: config.lq_dir, gt_dir: config.gt_dir, label_file: config.label_file })
     e.reference = body.reference ?? null
     evaluations = [e, ...evaluations]
     sets = sets.map((s) => (s.id === body.result_set_id ? { ...s, evaluating: true } : s))
@@ -132,6 +201,7 @@ export const mockResults = {
       result_sets: chosen.map((s) => ({ id: s.id, name: s.name, server_name: s.server_name, meta: s.meta })),
       metrics: EVALUATORS.filter((m) => present.has(m.name)),
       values: Object.fromEntries(chosen.map((s) => [String(s.id), { ...s.metrics }])),
+      lq_values: Object.fromEntries(chosen.filter((s) => Object.keys(s.lq_metrics).length).map((s) => [String(s.id), { ...s.lq_metrics }])),
     }
   },
   compareSamples(ids: number[], metric: string | undefined, sort: CompareSort, offset: number, limit: number): CompareSamples {

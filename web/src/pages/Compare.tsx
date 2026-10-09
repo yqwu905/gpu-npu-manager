@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { resultsApi } from '../api/results'
-import { ErrorNote, MockBadge, SampleImage } from '../components/common'
+import { ErrorNote, MockBadge, SampleImage, Switch } from '../components/common'
 import { useMock, usePoll } from '../lib/hooks'
-import { fmtMetric, sampleKind } from './Results'
+import { fmtMetric, sampleKind, sampleText } from './Results'
 
 // 三个系列的颜色在明度上拉开，色弱也能区分
 const COLORS = ['#123F99', '#E08A2E', '#8DB3F0', '#2E8B57', '#8E2219']
@@ -36,6 +36,7 @@ export default function ComparePage() {
   const [sort, setSort] = useState<'spread' | 'worst' | 'none'>('spread')
   const [metricPick, setMetricPick] = useState('')
   const [page, setPage] = useState(0)
+  const [showLq, setShowLq] = useState(true)
   const pageSize = 10
   const base = ids[Math.min(baseIdx, ids.length - 1)]
 
@@ -64,6 +65,11 @@ export default function ComparePage() {
   const colorOf = (id: number) => COLORS[ids.indexOf(id) % COLORS.length]
 
   const valueOf = (id: number, name: string) => m?.values[String(id)]?.[name] ?? null
+  // LQ 基线：取基线结果集的，没有时取其他结果集的（同一配置的 LQ 指标相同）
+  const lqOwner = [base, ...ids].find((id) => m?.lq_values?.[String(id)])
+  const lqValues = lqOwner !== undefined ? m?.lq_values[String(lqOwner)] : undefined
+  const hasLqImage = sampleItems.some((it) => Object.values(it.results).some((r) => typeof r?.lq_image === 'string'))
+  const lqCols = hasLqImage && showLq ? 1 : 0
   const bestOf = (name: string, hi: boolean) => {
     const vs = ids.map((id) => valueOf(id, name)).filter((v): v is number => v !== null)
     return vs.length ? (hi ? Math.max(...vs) : Math.min(...vs)) : null
@@ -131,6 +137,22 @@ export default function ComparePage() {
                     <td className="lbl">{(() => { const meta = m.result_sets.find((r) => r.id === id)?.meta ?? {}; return `${String(meta.model ?? '-')} · ${String(meta.dataset ?? '-')}` })()}</td>
                   </tr>
                 ))}
+                {lqValues && (
+                  <tr>
+                    <td />
+                    <td><span className="row"><span className="dot" style={{ width: 10, height: 10, borderRadius: 5, background: 'var(--faint)' }} /><span style={{ fontWeight: 500 }}>LQ 基线</span></span></td>
+                    {m.metrics.map((d) => {
+                      const v = lqValues[d.name] ?? null, b = valueOf(base, d.name)
+                      return (
+                        <td key={d.name} className="num">
+                          <div className="mono" style={{ fontSize: 14, color: 'var(--ink-2)' }}>{fmtMetric(v)}</div>
+                          <div className="mono" style={{ fontSize: 12, color: deltaColor(v, b, d.higher_is_better) }}>{deltaText(v, b)}</div>
+                        </td>
+                      )
+                    })}
+                    <td className="lbl">LQ 图片与同样的参考值计算</td>
+                  </tr>
+                )}
               </tbody>
             </table>
             {m.metrics.length === 0 && <div className="empty">所选结果集都还没有评测指标，可以先在“结果与评测”页发起评测</div>}
@@ -186,6 +208,7 @@ export default function ComparePage() {
                 <h2>样本对比</h2>
                 <div className="lbl" style={{ marginTop: 4 }}>同一样本 id 下并排展示各结果集的输出，按逐样本指标差异排序，快速找到差别最大的样本</div>
               </div>
+              {hasLqImage && <span className="row" style={{ gap: 6 }}><span className="lbl">LQ</span><Switch on={showLq} onChange={setShowLq} label="并排显示 LQ" /></span>}
               {m.metrics.length > 0 && (
                 <>
                   <label className="row"><span className="lbl">指标</span>
@@ -218,17 +241,27 @@ export default function ComparePage() {
               const refOf = (k: 'ref_image' | 'ref_text') => [base, ...ids].map((id) => it.results[String(id)]?.[k]).find((v) => typeof v === 'string')
               const refImage = refOf('ref_image')
               const refOwner = ids.find((id) => it.results[String(id)]?.ref_image === refImage) ?? base
+              // 评测补上的 ref_image / lq_image 在评测服务器上，按 media 带上评测 ID
+              const mediaOf = (owner: number, k: 'ref_image' | 'lq_image') => it.results[String(owner)]?.media?.[k]
+              const lqHolder = [base, ...ids].find((id) => typeof it.results[String(id)]?.lq_image === 'string')
+              const lqImage = lqHolder !== undefined ? String(it.results[String(lqHolder)]?.lq_image) : null
               const spreadLabel = metricDef ? <span className="lbl">{metricDef.label} 差 <span className="mono" style={{ color: 'var(--ink)' }}>{fmtMetric(it.spread)}</span></span> : null
               if (kind === 'image') {
                 return (
                   <div key={it.id} className="table-box" style={{ borderBottom: '1px solid var(--border-soft)' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: `110px repeat(${ids.length + 1}, minmax(150px, 1fr))`, gap: 12, padding: '12px 18px', alignItems: 'start', minWidth: 110 + (ids.length + 1) * 162 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: `110px repeat(${ids.length + 1 + lqCols}, minmax(150px, 1fr))`, gap: 12, padding: '12px 18px', alignItems: 'start', minWidth: 110 + (ids.length + 1 + lqCols) * 162 }}>
                       <div className="col" style={{ gap: 4 }}>
                         <span className="mono" style={{ fontWeight: 500 }}>{it.id}</span>
                         {spreadLabel}
                       </div>
+                      {lqCols > 0 && (
+                        <div className="col" style={{ gap: 6 }}>
+                          {lqImage && lqHolder !== undefined ? <SampleImage src={resultsApi.fileUrl(lqHolder, lqImage, mediaOf(lqHolder, 'lq_image'))} seed={it.id} mock={mock} blur={2} label={`LQ ${it.id}`} /> : <div className="thumb" />}
+                          <span className="lbl">LQ</span>
+                        </div>
+                      )}
                       <div className="col" style={{ gap: 6 }}>
-                        {refImage ? <SampleImage src={resultsApi.fileUrl(refOwner, refImage)} seed={it.id} mock={mock} label={`参考图 ${it.id}`} /> : <div className="thumb" />}
+                        {refImage ? <SampleImage src={resultsApi.fileUrl(refOwner, refImage, mediaOf(refOwner, 'ref_image'))} seed={it.id} mock={mock} label={`参考图 ${it.id}`} /> : <div className="thumb" />}
                         <span className="lbl">参考图</span>
                       </div>
                       {ids.map((id, i) => {
@@ -259,13 +292,14 @@ export default function ComparePage() {
                     <span className="mono" style={{ fontWeight: 500 }}>{it.id}</span>
                     {spreadLabel}
                     <span className="grow" />
+                    {lqCols > 0 && lqImage && lqHolder !== undefined && <SampleImage src={resultsApi.fileUrl(lqHolder, lqImage, mediaOf(lqHolder, 'lq_image'))} seed={it.id} mock={mock} blur={2} label={`LQ ${it.id}`} style={{ width: 180, aspectRatio: '7 / 1' }} />}
                     {typeof crop === 'string' && <SampleImage src={resultsApi.fileUrl(base, crop)} seed={it.id} mock={mock} label={`样本图片 ${it.id}`} style={{ width: 180, aspectRatio: '7 / 1' }} />}
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '170px minmax(0, 1fr) 70px', gap: '6px 12px', alignItems: 'center', fontSize: 15 }}>
                     <span className="lbl">参考答案</span><span>{ref}</span><span />
                     {ids.map((id, i) => {
                       const r = it.results[String(id)]
-                      const text = String(r?.text ?? '')
+                      const text = sampleText(r) ?? ''
                       return [
                         <span key={`n${id}`} className="row" style={{ gap: 6, fontSize: 12 }}><span className="dot" style={{ background: colorOf(id) }} /><span className="mono ellipsis">{nameOf(id)}</span></span>,
                         <span key={`t${id}`}>{!r ? <span className="lbl">该结果集没有这个样本</span> : !ref ? text : diffChars(text, ref).map((ch, k) => (

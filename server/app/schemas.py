@@ -282,17 +282,52 @@ class EvaluatorOut(BaseModel):
     description: str
 
 
+def _clean_tags(value):
+    return None if value is None else ServerBase._clean_tags(value)
+
+
+class ProjectCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=128)
+    description: str | None = None
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    description: str | None = None
+
+
+class ProjectOut(BaseModel):
+    id: int
+    name: str
+    description: str | None = None
+    result_count: int = Field(description="归档到该项目的结果集数量")
+    created_at: datetime
+
+
+class TagCount(BaseModel):
+    tag: str
+    count: int
+
+
 class ResultSetCreate(BaseModel):
     server_id: int
     path: str = Field(min_length=1, description="结果集目录在服务器上的绝对路径，有 predictions.jsonl 时按它读取样本，否则扫描目录里的图片和 .txt")
     name: str | None = Field(default=None, max_length=255, description="不填时取 meta.json 的 name 或目录名")
     note: str | None = None
     job_id: int | None = Field(default=None, description="产生该结果的任务")
+    project_id: int | None = Field(default=None, description="归档到的项目")
+    tags: list[str] = Field(default=[], description="标签，可多个")
+
+    _tags = field_validator("tags")(classmethod(lambda cls, v: _clean_tags(v)))
 
 
 class ResultSetUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     note: str | None = None
+    project_id: int | None = Field(default=None, description="归档到的项目，传 null 表示移出项目")
+    tags: list[str] | None = None
+
+    _tags = field_validator("tags")(classmethod(lambda cls, v: _clean_tags(v)))
 
 
 class ResultSetOut(BaseModel):
@@ -305,7 +340,11 @@ class ResultSetOut(BaseModel):
     sample_count: int | None = None
     note: str | None = None
     job_id: int | None = None
+    project_id: int | None = None
+    project_name: str | None = None
+    tags: list[str] = []
     metrics: dict[str, float] = Field(default={}, description="每个指标最近一次成功评测的值")
+    lq_metrics: dict[str, float] = Field(default={}, description="最近一次带 LQ 基线的评测对应的 LQ 指标")
     evaluating: bool = Field(default=False, description="是否有进行中的评测")
     created_at: datetime
 
@@ -315,15 +354,59 @@ class SamplePage(BaseModel):
     offset: int
     items: list[dict] = Field(
         description="predictions.jsonl 的原始记录（没有它时为扫描得到的 id、image、text），另加 metrics 字段（该样本的逐样本指标）；"
-        "图片字段为相对路径，用 /api/results/{id}/file?path= 读取"
+        "图片字段为相对路径，用 /api/results/{id}/file?path= 读取。评测配对到的 ref_image、ref_text、lq_image、ocr_text "
+        "在记录没有该字段时补上，这些图片在评测服务器上，读取时另加 evaluation_id（见 media 字段：字段名 -> 评测 ID）"
     )
+
+
+class EvalConfigBase(BaseModel):
+    metrics: list[MetricName] = Field(min_length=1, description="评测哪些指标")
+    label_file: str | None = Field(default=None, description="文字指标的 PaddleOCR 格式标注文件")
+    gt_dir: str | None = Field(default=None, description="GT 目录，按文件名与样本配对")
+    lq_dir: str | None = Field(default=None, description="LQ 目录，按文件名与样本配对；页面上与结果并排展示，并计算一次 LQ 基线指标")
+    server_id: int | None = Field(default=None, description="评测服务器；指定后把结果目录拷贝到 server_path 下再评测，为空时在结果所在服务器上评测")
+    server_path: str | None = Field(default=None, description="评测服务器上存放拷贝数据的目录，指定评测服务器时必填")
+    num_devices: int = Field(default=0, ge=0, le=8, description="LPIPS、OCR 可用 1 张卡加速")
+    note: str | None = None
+
+
+class EvalConfigCreate(EvalConfigBase):
+    name: str = Field(min_length=1, max_length=128)
+
+
+class EvalConfigUpdate(BaseModel):
+    """只提交需要修改的字段。"""
+
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    metrics: list[MetricName] | None = Field(default=None, min_length=1)
+    label_file: str | None = None
+    gt_dir: str | None = None
+    lq_dir: str | None = None
+    server_id: int | None = None
+    server_path: str | None = None
+    num_devices: int | None = Field(default=None, ge=0, le=8)
+    note: str | None = None
+
+
+class EvalConfigOut(EvalConfigBase):
+    id: int
+    name: str
+    server_name: str | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class EvaluationCreate(BaseModel):
     result_set_id: int
-    metrics: list[MetricName] = Field(min_length=1)
+    config_id: int | None = Field(default=None, description="评测配置；请求中另外给出的字段覆盖配置中的值")
+    metrics: list[MetricName] | None = Field(default=None, min_length=1, description="不用配置时必填")
     reference: str | None = Field(default=None, description="可选，服务器上的参考目录（按文件名配对图片和 .txt）、参考值 jsonl（按 id 合并 ref_image / ref_text），或 PaddleOCR 格式的文字标注文件")
-    num_devices: int = Field(default=0, ge=0, le=8, description="LPIPS 可用 1 张卡加速，其他指标用 0 即可")
+    label_file: str | None = None
+    gt_dir: str | None = None
+    lq_dir: str | None = None
+    server_id: int | None = Field(default=None, description="评测服务器，见评测配置")
+    server_path: str | None = None
+    num_devices: int | None = Field(default=None, ge=0, le=8, description="LPIPS 可用 1 张卡加速，其他指标用 0 即可；不填时取配置中的值或 0")
     priority: int = Field(default=0, ge=-100, le=100)
     submitter: str | None = None
 
@@ -334,13 +417,27 @@ class EvaluationOut(BaseModel):
     result_set_name: str
     metrics: list[str]
     reference: str | None = None
+    config_id: int | None = None
+    config_name: str | None = None
+    label_file: str | None = None
+    gt_dir: str | None = None
+    lq_dir: str | None = None
+    server_id: int = Field(description="运行评测的服务器")
+    server_name: str
+    data_path: str = Field(description="评测服务器上的结果目录（拷贝过去的，或结果集原目录）")
+    output_dir: str
     job_id: int | None = None
     job_status: str | None = None
-    status: Literal["pending", "running", "succeeded", "failed"]
+    status: Literal["copying", "pending", "running", "succeeded", "failed"]
     values: dict[str, float | None] | None = Field(default=None, description="整体指标，无法计算的为 null")
     counts: dict[str, int] | None = Field(default=None, description="每个指标参与计算的样本数")
     errors: dict[str, str] | None = Field(default=None, description="未能计算的指标及原因")
     num_skipped: int | None = Field(default=None, description="读取失败或尺寸不一致而跳过的样本数")
+    compute_lq: bool = Field(default=False, description="本次评测是否计算 LQ 基线指标")
+    lq_source_id: int | None = Field(default=None, description="LQ 基线指标来自哪次评测（同配置的第一次评测）")
+    lq_values: dict[str, float | None] | None = Field(default=None, description="LQ 基线指标")
+    lq_counts: dict[str, int] | None = None
+    lq_errors: dict[str, str] | None = None
     error: str | None = None
     created_at: datetime
     finished_at: datetime | None = None
@@ -357,6 +454,7 @@ class MetricCompare(BaseModel):
     result_sets: list[CompareResultSet]
     metrics: list[EvaluatorOut] = Field(description="至少一个结果集有值的指标")
     values: dict[str, dict[str, float]] = Field(description="结果集 ID -> 指标名 -> 值")
+    lq_values: dict[str, dict[str, float]] = Field(default={}, description="结果集 ID -> LQ 基线指标，没有时缺省")
 
 
 class SampleCompareItem(BaseModel):

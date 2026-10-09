@@ -7,8 +7,8 @@ from .config import Settings
 from .deployer import Deployer
 from .db import Base, add_missing_columns, make_engine, make_session_factory
 from .poller import Poller
-from .evaluations import EvaluationCollector
-from .routers import jobs, overview, results, servers
+from .evaluations import EvaluationCollector, EvaluationCopier
+from .routers import eval_configs, jobs, overview, projects, results, servers
 from .scheduler import Scheduler
 from .tunnels import Tunnels
 from .web import mount_web
@@ -24,6 +24,8 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
     scheduler = Scheduler(settings, session_factory, transport=transport)
     collector = EvaluationCollector(settings, session_factory, scheduler.agent)
     scheduler.after_round.append(collector.run_once)
+    copier = EvaluationCopier(settings, session_factory)
+    copier.recover()
     tunnels = Tunnels(settings, session_factory)
     poller.tunnels = tunnels
     scheduler.agent.tunnels = tunnels
@@ -53,9 +55,12 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
     app.state.poller = poller
     app.state.scheduler = scheduler
     app.state.deployer = deployer
+    app.state.copier = copier
     app.include_router(overview.router)
     app.include_router(servers.router)
     app.include_router(jobs.router)
     app.include_router(results.router)
+    app.include_router(projects.router)
+    app.include_router(eval_configs.router)
     return app
 

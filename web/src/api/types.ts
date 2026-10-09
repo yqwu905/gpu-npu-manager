@@ -275,8 +275,13 @@ export interface ResultSet {
   note: string | null
   /** 产生该结果的任务 */
   job_id: number | null
+  project_id: number | null
+  project_name: string | null
+  tags: string[]
   /** 每个指标最近一次成功评测的值 */
   metrics: Record<string, number>
+  /** 最近一次带 LQ 基线的评测对应的 LQ 指标 */
+  lq_metrics: Record<string, number>
   evaluating: boolean
   created_at: string
 }
@@ -287,6 +292,57 @@ export interface ResultSetCreate {
   name?: string | null
   note?: string | null
   job_id?: number | null
+  project_id?: number | null
+  tags?: string[]
+}
+
+/** 只提交需要修改的字段，project_id 传 null 表示移出项目 */
+export interface ResultSetUpdate {
+  name?: string
+  note?: string | null
+  project_id?: number | null
+  tags?: string[]
+}
+
+/** GET /api/results 的筛选条件；project_id 为 0 表示未归档 */
+export interface ResultFilters {
+  project_id?: number
+  tag?: string[]
+  q?: string
+}
+
+export interface Project {
+  id: number
+  name: string
+  description: string | null
+  result_count: number
+  created_at: string
+}
+
+export interface TagCount {
+  tag: string
+  count: number
+}
+
+/** 评测配置；路径都在评测服务器上（未指定评测服务器时在结果所在服务器上） */
+export interface EvalConfigBody {
+  name: string
+  metrics: string[]
+  label_file: string | null
+  gt_dir: string | null
+  lq_dir: string | null
+  /** 指定后先把结果目录拷贝到 server_path 下，再在该服务器上评测 */
+  server_id: number | null
+  server_path: string | null
+  num_devices: number
+  note: string | null
+}
+
+export interface EvalConfig extends EvalConfigBody {
+  id: number
+  server_name: string | null
+  created_at: string
+  updated_at: string
 }
 
 /** predictions.jsonl 的一行原样返回（没有它时为扫描到的 image / text），常用字段 image / ref_image / text / ref_text，另加逐样本指标 */
@@ -296,6 +352,12 @@ export interface Sample {
   ref_image?: string
   text?: string
   ref_text?: string
+  /** 评测配对到的 LQ 图片（评测服务器上的绝对路径） */
+  lq_image?: string
+  /** 评测时 OCR 识别出的文本（样本本身没有 text 时） */
+  ocr_text?: string
+  /** 来自评测服务器的图片字段 -> 评测 ID，读取文件时带上 */
+  media?: Record<string, number>
   metrics: Record<string, number>
   [field: string]: unknown
 }
@@ -306,7 +368,7 @@ export interface SamplePage {
   items: Sample[]
 }
 
-export type EvaluationStatus = 'pending' | 'running' | 'succeeded' | 'failed'
+export type EvaluationStatus = 'copying' | 'pending' | 'running' | 'succeeded' | 'failed'
 
 export interface Evaluation {
   id: number
@@ -314,6 +376,23 @@ export interface Evaluation {
   result_set_name: string
   metrics: string[]
   reference: string | null
+  config_id: number | null
+  config_name: string | null
+  label_file: string | null
+  gt_dir: string | null
+  lq_dir: string | null
+  /** 运行评测的服务器 */
+  server_id: number
+  server_name: string
+  /** 评测服务器上的结果目录（拷贝过去的，或结果集原目录） */
+  data_path: string
+  output_dir: string
+  /** 本次是否计算 LQ 基线；同一配置只在第一次评测时计算 */
+  compute_lq: boolean
+  lq_source_id: number | null
+  lq_values: Record<string, number | null> | null
+  lq_counts: Record<string, number> | null
+  lq_errors: Record<string, string> | null
   job_id: number | null
   job_status: string | null
   status: EvaluationStatus
@@ -326,10 +405,17 @@ export interface Evaluation {
   finished_at: string | null
 }
 
+/** 给了 config_id 时先取配置中的值，其他字段覆盖配置 */
 export interface EvaluationCreate {
   result_set_id: number
-  metrics: string[]
+  config_id?: number | null
+  metrics?: string[]
   reference?: string | null
+  label_file?: string | null
+  gt_dir?: string | null
+  lq_dir?: string | null
+  server_id?: number | null
+  server_path?: string | null
   num_devices?: number
   priority?: number
   submitter?: string | null
@@ -341,6 +427,8 @@ export interface CompareMetrics {
   metrics: Evaluator[]
   /** 结果集 ID -> 指标名 -> 值，缺少的指标没有键 */
   values: Record<string, Record<string, number>>
+  /** 结果集 ID -> LQ 基线指标，没有时缺省 */
+  lq_values: Record<string, Record<string, number>>
 }
 
 export interface CompareSampleItem {

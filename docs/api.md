@@ -303,7 +303,21 @@
 
 ## 推理结果与评测
 
-结果集是某台服务器上的一个目录（格式见仓库 README 的“推理结果格式”），平台通过 Agent 读取，文件留在原服务器上。评测会作为普通任务提交到结果所在的服务器上运行（任务名为“评测 <结果集名>”，在任务列表中也能看到），输出写到结果目录下的 `eval/<评测 ID>/`。
+结果集是某台服务器上的一个目录（格式见仓库 README 的“推理结果格式”），平台通过 Agent 读取，文件留在原服务器上。评测会作为普通任务提交到评测服务器上运行（未指定时为结果所在的服务器；任务名为“评测 <结果集名>”，在任务列表中也能看到），输出写到该服务器上结果目录下的 `eval/<评测 ID>/`。
+
+### 项目：GET/POST /api/projects，PATCH/DELETE /api/projects/{id}
+
+`POST {"name": "超分", "description": "可选"}`，名称不能重复（409）。返回 `{"id", "name", "description", "result_count", "created_at"}`。删除项目时其中的结果集改为未归档，不会删除。
+
+### 评测配置：GET/POST /api/eval-configs，PATCH/DELETE /api/eval-configs/{id}
+
+```json
+{"name": "DIV2K ×4", "metrics": ["psnr", "ssim", "ocr_a"],
+ "label_file": "/data/ds/Label.txt", "gt_dir": "/data/ds/HR", "lq_dir": "/data/ds/LR",
+ "server_id": 5, "server_path": "/data/eval", "num_devices": 1, "note": null}
+```
+
+路径都在评测服务器上（`server_id` 为空时在结果所在服务器上），必须是绝对路径，空串视为未填。指定 `server_id` 时 `server_path` 必填，且该服务器要填写 SSH 用户。返回值另有 `id`、`server_name`、`created_at`、`updated_at`。修改和删除配置不影响已有评测。
 
 ### GET /api/evaluators
 
@@ -322,7 +336,7 @@
 
 ### POST /api/results
 
-登记一个结果集：`{"server_id": 3, "path": "/data/results/model-a", "name": "可选", "note": "可选", "job_id": null}`。平台会读取目录下的 `meta.json`（可选）并统计样本数：有 `predictions.jsonl` 时按它统计，没有时扫描目录里的图片和 `.txt`（见 README“推理结果格式”）；目录无法读取或没有任何样本时返回 422。
+登记一个结果集：`{"server_id": 3, "path": "/data/results/model-a", "name": "可选", "note": "可选", "job_id": null, "project_id": null, "tags": ["v1"]}`。平台会读取目录下的 `meta.json`（可选）并统计样本数：有 `predictions.jsonl` 时按它统计，没有时扫描目录里的图片和 `.txt`（见 README“推理结果格式”）；目录无法读取或没有任何样本时返回 422。
 
 返回 `ResultSetOut`：
 
@@ -332,17 +346,19 @@
   "path": "/data/results/model-a",
   "meta": {"model": "model-a", "dataset": "demo"},
   "sample_count": 1000, "note": null, "job_id": null,
+  "project_id": 2, "project_name": "超分", "tags": ["v1"],
   "metrics": {"psnr": 28.41, "ssim": 0.873, "ocr_a": 0.92, "cer": 0.031, "ned": 0.975},
+  "lq_metrics": {"psnr": 24.9, "ssim": 0.70},
   "evaluating": false,
   "created_at": "2026-10-08T15:00:00Z"
 }
 ```
 
-`metrics` 是每个指标最近一次成功评测的值；还没评测过时为空对象。
+`metrics` 是每个指标最近一次成功评测的值；还没评测过时为空对象。`lq_metrics` 是最近一次带 LQ 基线的评测对应的 LQ 指标。
 
 ### GET /api/results
 
-结果集列表，按登记时间倒序，可用 `server_id`、`q` 筛选。`GET /api/results/{id}` 返回单个；`PATCH` 可改 `name`、`note`；`DELETE` 只删除登记，不删服务器上的文件。
+结果集列表，按登记时间倒序，可用 `server_id`、`project_id`（0 表示未归档）、`tag`（可重复，需全部包含）、`q`（匹配名称、路径、备注）筛选。`GET /api/results/{id}` 返回单个；`PATCH` 可改 `name`、`note`、`project_id`（null 表示移出项目）、`tags`；`DELETE` 只删除登记，不删服务器上的文件。`GET /api/results/tags` 返回用到的所有标签及结果集数 `[{"tag": "v1", "count": 3}]`。
 
 ### GET /api/results/{id}/samples?offset=0&limit=50
 
@@ -354,9 +370,11 @@
  "metrics": {"psnr": 27.9, "ssim": 0.86, "ocr_a": 0.0, "cer": 0.25, "ned": 0.75}}
 ```
 
+最近一次成功评测配对到的 `ref_image`、`ref_text`、`lq_image`（LQ 图片）和 `ocr_text`（OCR 识别文本）在记录没有该字段时补上。补上的图片在评测服务器上，`media` 给出来源：`{"lq_image": 12, "ref_image": 12}`（字段名 -> 评测 ID），读取时在 file 接口加 `evaluation_id`。
+
 ### GET /api/results/{id}/file?path=images/0001.png
 
-读取结果集里的文件（主要是图片），直接返回文件内容和对应的 Content-Type，可以作为 `<img src>` 使用。`path` 可以是相对结果集目录的路径，也可以是服务器上的绝对路径（如参考图）。
+读取结果集里的文件（主要是图片），直接返回文件内容和对应的 Content-Type，可以作为 `<img src>` 使用。`path` 可以是相对结果集目录的路径，也可以是服务器上的绝对路径（如参考图）。加 `evaluation_id` 时从该评测的评测服务器读取（相对路径相对于拷贝过去的结果目录）。
 
 ### POST /api/evaluations
 
@@ -364,12 +382,17 @@
 {"result_set_id": 7, "metrics": ["psnr", "ssim", "ocr_a", "cer", "ned"], "reference": null, "num_devices": 0, "priority": 0, "submitter": "alice"}
 ```
 
+也可以用评测配置：`{"result_set_id": 7, "config_id": 3}`，请求里另外给出的 `metrics`、`label_file`、`gt_dir`、`lq_dir`、`server_id`、`server_path`、`num_devices` 覆盖配置中的值。评测服务器与结果所在服务器不同时，先把结果目录拷贝到 `server_path/result_<结果集 ID>`（状态 `copying`），完成后再提交评测任务；结果所在服务器没有填写 SSH 用户时返回 422。
+
 `reference` 可选，是服务器上的参考目录（按文件名配对图片和 `.txt`）、参考值 jsonl，或 PaddleOCR 格式的文字标注文件（每行“图片文件名<Tab>文本框 JSON 数组”，见 README）的路径。样本没有识别文本时，文字指标会先用 PaddleOCR 识别预测图。`num_devices` 默认 0；LPIPS 和 OCR 可以给 1 张卡加速。返回 `EvaluationOut`：
 
 ```json
 {
   "id": 12, "result_set_id": 7, "result_set_name": "model-a",
   "metrics": ["psnr", "ssim", "ocr_a", "cer", "ned"], "reference": null,
+  "config_id": 3, "config_name": "DIV2K ×4", "label_file": null, "gt_dir": "/data/ds/HR", "lq_dir": "/data/ds/LR",
+  "server_id": 5, "server_name": "gpu-05", "data_path": "/data/eval/result_7", "output_dir": "/data/eval/result_7/eval/12",
+  "compute_lq": true, "lq_source_id": 12, "lq_values": {"psnr": 24.9, "ssim": 0.70}, "lq_counts": {"psnr": 1000, "ssim": 1000}, "lq_errors": null,
   "job_id": 88, "job_status": "succeeded",
   "status": "succeeded",
   "values": {"psnr": 28.41, "ssim": 0.873, "ocr_a": 0.92, "cer": 0.031, "ned": 0.975},
@@ -379,7 +402,9 @@
 }
 ```
 
-`status`：`pending`（任务排队中）/ `running` / `succeeded` / `failed`（原因见 `error`，详细输出看 `job_id` 对应任务的日志）。评测成功但个别指标算不出来（如服务器没装 lpips、缺少 `ref_text` 字段）时，该指标在 `values` 中为 `null`，原因在 `errors` 中。
+`compute_lq` 表示本次是否计算 LQ 基线：同一配置下 LQ、GT、Label、评测服务器都相同且指标覆盖本次的评测已经算过（或正在算）时为 false，`lq_source_id` 指向那次评测，`lq_values` 取自它。
+
+`status`：`copying`（正在拷贝到评测服务器）/ `pending`（任务排队中）/ `running` / `succeeded` / `failed`（原因见 `error`，详细输出看 `job_id` 对应任务的日志）。评测成功但个别指标算不出来（如服务器没装 lpips、缺少 `ref_text` 字段）时，该指标在 `values` 中为 `null`，原因在 `errors` 中。
 
 `GET /api/evaluations?result_set_id=7` 列出某个结果集的评测历史，`GET /api/evaluations/{id}` 返回单个。
 
@@ -391,9 +416,12 @@
 {
   "result_sets": [{"id": 7, "name": "model-a", "server_name": "gpu-03", "meta": {}}, {"id": 8, "name": "model-b", "server_name": "npu-01", "meta": {}}],
   "metrics": [EvaluatorOut, ...],
-  "values": {"7": {"psnr": 28.41, "cer": 0.031}, "8": {"psnr": 26.02, "cer": 0.054}}
+  "values": {"7": {"psnr": 28.41, "cer": 0.031}, "8": {"psnr": 26.02, "cer": 0.054}},
+  "lq_values": {"7": {"psnr": 24.9}}
 }
 ```
+
+`lq_values` 是有 LQ 基线的结果集的 LQ 指标（同一配置下相同）。
 
 `metrics` 只包含至少一个结果集有值的指标，顺序固定；某个结果集缺少某指标时 `values` 里没有该键。
 
