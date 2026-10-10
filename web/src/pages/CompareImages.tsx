@@ -169,7 +169,7 @@ function CompareImages({ ids, nameOf, colorOf }: Props) {
     let drag: { id: number; x: number; y: number; v: View; w: number; h: number } | null = null
     const onDown = (e: PointerEvent) => {
       const vp = vpOf(e.target)
-      if (!vp || !isMod(e) || e.button !== 0 || (e.target as HTMLElement).closest('button')) return
+      if (!vp || e.button !== 0 || (e.target as HTMLElement).closest('button')) return
       e.preventDefault()
       vp.setPointerCapture(e.pointerId)
       const r = vp.getBoundingClientRect()
@@ -236,7 +236,8 @@ function CompareImages({ ids, nameOf, colorOf }: Props) {
           <span className="row" style={{ gap: 6 }}><kbd className="kbd">单击</kbd>仅切换该结果</span>
           <span className="row" style={{ gap: 6 }}><kbd className="kbd">{MOD_KEY} + 单击</kbd>按序号同步全部结果</span>
           <span className="row" style={{ gap: 6 }}><kbd className="kbd">Alt + 单击</kbd>按文件名编辑距离匹配</span>
-          <span className="row" style={{ gap: 6 }}><kbd className="kbd">{MOD_KEY} + 滚轮 / 拖动</kbd>同步缩放与平移</span>
+          <span className="row" style={{ gap: 6 }}><kbd className="kbd">{MOD_KEY} + 滚轮</kbd>同步缩放</span>
+          <span className="row" style={{ gap: 6 }}><kbd className="kbd">拖动</kbd>同步平移</span>
           <span className="grow" />
           <span role="status" className="mono" style={{ color: 'var(--ink)' }}>{status || '点击缩略图切换图片'}</span>
         </div>
