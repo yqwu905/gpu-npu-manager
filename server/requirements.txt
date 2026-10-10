@@ -2,3 +2,5 @@ fastapi>=0.110
 uvicorn[standard]>=0.29
 sqlalchemy>=2.0
 httpx>=0.27
+# 节点没有 Pillow 时由中心服务生成缩略图和预览
+pillow>=10

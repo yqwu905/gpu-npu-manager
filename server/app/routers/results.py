@@ -1,4 +1,6 @@
 import posixpath
+import time
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import select
@@ -19,6 +21,7 @@ from ..evaluations import (
     lq_baseline,
     ssh_target,
 )
+from ..images import NOSNIFF
 from ..models import EvalConfig, Evaluation, Project, ResultSet, Server
 from .eval_configs import check_eval_server, normalize_paths
 from ..schemas import (
@@ -26,6 +29,7 @@ from ..schemas import (
     EvaluationCreate,
     EvaluationOut,
     EvaluatorOut,
+    ImageList,
     MetricCompare,
     ResultSetCreate,
     ResultSetOut,
@@ -41,6 +45,8 @@ router = APIRouter(prefix="/api", tags=["results"])
 
 JSONL_PAGE = 5000
 MAX_COMPARE_SAMPLES = 50000
+# 读取文件和图片时，结果集对应的 Agent 与目录缓存多久（秒）
+MEDIA_TARGET_TTL = 10
 
 
 def _agent(request: Request):
@@ -246,9 +252,10 @@ def update_result(result_id: int, body: ResultSetUpdate, session: Session = Depe
 
 
 @router.delete("/results/{result_id}", status_code=204, summary="删除结果集登记（不删除服务器上的文件）")
-def delete_result(result_id: int, session: Session = Depends(get_session)):
+def delete_result(result_id: int, request: Request, session: Session = Depends(get_session)):
     session.delete(_load_result(session, result_id))
     session.commit()
+    request.app.state.media_targets.clear()
     return Response(status_code=204)
 
 
@@ -317,30 +324,94 @@ async def result_samples(
     return SamplePage(total=page["total"], offset=offset, items=items)
 
 
-@router.get("/results/{result_id}/file", summary="读取结果集中的文件（如图片）")
-async def result_file(
-    result_id: int,
-    request: Request,
-    path: str = Query(..., description="相对结果集目录的路径，或服务器上的绝对路径"),
-    evaluation_id: int | None = Query(None, description="从该评测的评测服务器读取（样本的 media 字段给出）"),
-):
-    with request.app.state.session_factory() as session:
-        result = _load_result(session, result_id)
-        host, port, base = result.server.host, result.server.port, result.path
+def _media_target(app, result_id: int, evaluation_id: int | None) -> tuple[str, int, str]:
+    """读取结果集文件的 Agent 地址、端口和基准目录（评测补上的图片在评测服务器上，基准为拷贝过去的目录），缓存 10 秒。
+    删除结果集、评测和修改、删除服务器时清空。"""
+    cache = app.state.media_targets
+    key = (result_id, evaluation_id)
+    cached = cache.get(key)
+    if cached is not None and time.monotonic() - cached[0] < MEDIA_TARGET_TTL:
+        return cached[1]
+    with app.state.session_factory() as session:
+        try:
+            result = _load_result(session, result_id)
+        except HTTPException as exc:
+            raise HTTPException(exc.status_code, exc.detail, headers={"Cache-Control": "no-store", **NOSNIFF})
+        target = result.server.host, result.server.port, result.path
         if evaluation_id is not None:
             evaluation = next((e for e in result.evaluations if e.id == evaluation_id), None)
             if evaluation is None:
-                raise HTTPException(404, "评测不存在")
+                raise HTTPException(404, "评测不存在", headers={"Cache-Control": "no-store", **NOSNIFF})
             server = eval_server(evaluation, result)
-            host, port, base = server.host, server.port, evaluation.data_path or result.path
-    full = path if posixpath.isabs(path) else posixpath.normpath(posixpath.join(base, path))
-    try:
-        data, content_type = await _agent(request).read_raw(host, port, full)
-    except AgentError as exc:
-        if exc.status in (403, 404):
-            raise HTTPException(404, str(exc))
-        raise HTTPException(502, str(exc))
-    return Response(content=data, media_type=content_type, headers={"Cache-Control": "max-age=300"})
+            target = server.host, server.port, evaluation.data_path or result.path
+    if len(cache) > 4096:
+        cache.clear()
+    cache[key] = (time.monotonic(), target)
+    return target
+
+
+def _full_path(base: str, path: str) -> str:
+    return path if posixpath.isabs(path) else posixpath.normpath(posixpath.join(base, path))
+
+
+PATH_QUERY = Query(..., description="相对结果集目录的路径，或服务器上的绝对路径")
+VERSION_QUERY = Query(None, pattern="^[0-9a-f]{10}$", description="版本号（/images 返回）；与文件当前版本一致时浏览器可永久缓存")
+EVALUATION_QUERY = Query(None, description="从该评测的评测服务器读取（样本的 media 字段给出）")
+
+
+@router.get("/results/{result_id}/file", summary="读取结果集中的文件（如图片），流式转发")
+async def result_file(
+    result_id: int,
+    request: Request,
+    path: str = PATH_QUERY,
+    v: str | None = VERSION_QUERY,
+    evaluation_id: int | None = EVALUATION_QUERY,
+):
+    host, port, base = _media_target(request.app, result_id, evaluation_id)
+    return await request.app.state.media.file(request, host, port, _full_path(base, path), v)
+
+
+@router.get(
+    "/results/{result_id}/images",
+    response_model=ImageList,
+    summary="结果集的全部图片（对比页），gzip，带 ETag",
+    responses={304: {"description": "If-None-Match 与 ETag 一致，列表没有变化"}},
+)
+async def result_images(result_id: int, request: Request):
+    host, port, base = _media_target(request.app, result_id, None)
+    return await request.app.state.media.image_list(request, host, port, base)
+
+
+IMAGE_TYPES = {"image/jpeg": {}, "image/webp": {}, "image/png": {}, "image/gif": {}, "image/bmp": {}}
+
+
+@router.get(
+    "/results/{result_id}/image",
+    response_class=Response,
+    summary="图片的缩略图、预览、无损原图或瓦片",
+    responses={
+        200: {"content": IMAGE_TYPES, "description": "图片；响应头 X-Image-Width / X-Image-Height 为原图（按 EXIF 方向转正后）的尺寸"},
+        304: {"description": "If-None-Match 与 ETag 一致"},
+    },
+)
+async def result_image(
+    result_id: int,
+    request: Request,
+    path: str = PATH_QUERY,
+    v: str | None = VERSION_QUERY,
+    kind: Literal["thumb", "preview", "full", "tile"] = Query(
+        "thumb", description="thumb：长边 256 的缩略图；preview：长边不超过 size 的预览；full：原分辨率无损；tile：512² 瓦片"
+    ),
+    size: int | None = Query(None, ge=1, description="预览的长边，向上取到 1024 / 2048 / 3072，缺省 2048"),
+    l: int | None = Query(None, ge=0, description="瓦片层级，第 l 层为原图缩小 2^l 倍"),
+    x: int | None = Query(None, ge=0, description="瓦片列号"),
+    y: int | None = Query(None, ge=0, description="瓦片行号"),
+    evaluation_id: int | None = EVALUATION_QUERY,
+):
+    media = request.app.state.media
+    params = media.params(kind, size, l, x, y)
+    host, port, base = _media_target(request.app, result_id, evaluation_id)
+    return await media.image(request, host, port, base, _full_path(base, path), v, kind, params)
 
 
 # ----------------------------------------------------------------------------
@@ -455,7 +526,7 @@ def get_evaluation(evaluation_id: int, session: Session = Depends(get_session)):
 
 
 @router.delete("/evaluations/{evaluation_id}", status_code=204, summary="删除评测记录")
-def delete_evaluation(evaluation_id: int, session: Session = Depends(get_session)):
+def delete_evaluation(evaluation_id: int, request: Request, session: Session = Depends(get_session)):
     evaluation = _load_evaluation(session, evaluation_id)
     if evaluation.status == "copying":
         raise HTTPException(409, "正在拷贝数据，请等拷贝结束后再删除")
@@ -469,6 +540,7 @@ def delete_evaluation(evaluation_id: int, session: Session = Depends(get_session
         source = find_lq_baseline(session, user)
         user.lq_source_id = source.id if source is not None else None
     session.commit()
+    request.app.state.media_targets.clear()
     return Response(status_code=204)
 
 

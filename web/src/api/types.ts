@@ -454,3 +454,23 @@ export interface CompareSamples {
 }
 
 export type CompareSort = 'spread' | 'asc' | 'desc'
+
+/** GET /api/results/{id}/images 的一项：[路径, 字节数（-1 文件不存在，null 未知）, 版本号（'' 未知，URL 不能长期缓存）] */
+export type ImageEntry = [path: string, size: number | null, v: string]
+
+/** 结果集的全部图片，后端已按 (文件名, 路径) 排序并按路径去重，前端不要再排序 */
+export interface ImageList {
+  total: number
+  /** size 为 -1 的项数 */
+  missing: number
+  /** 没有字符串 image 字段或不是合法 JSON 的记录数 */
+  skipped: number
+  /** 超过 200000 项时只保留排序后的前 200000 项 */
+  truncated: boolean
+  /** agent：节点按文件状态生成；samples：旧节点兼容模式，size 都是 null、v 都为空；mock：前端示例数据 */
+  source: 'agent' | 'samples' | 'mock'
+  files: ImageEntry[]
+}
+
+/** thumb 最长边 256；preview 最长边按 size 档位（1024/2048/3072）；full 原分辨率无损；tile 无损金字塔的 512×512 瓦片 */
+export type ImageKind = 'thumb' | 'preview' | 'full' | 'tile'

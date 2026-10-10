@@ -16,7 +16,7 @@
 ## 目录
 
 ```
-agent/          节点 Agent（单文件，仅依赖 Python 3.7+ 标准库）
+agent/          节点 Agent（agent.py、evaluate.py、imaging.py，仅依赖 Python 3.7+ 标准库，Pillow 可选）
 server/app/     中心服务（FastAPI + SQLAlchemy）
 web/            前端（Vite + React），说明见 docs/frontend.md
 docs/           接口说明 api.md、openapi.json 与前端说明 frontend.md
@@ -36,7 +36,48 @@ cd server
 GNM_AGENT_TOKEN=<token> uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000
 ```
 
-打开 `http://<地址>:8000/` 进入管理页面，`http://<地址>:8000/docs` 可在线调试接口。升级中心服务时 `git pull` 后重新构建前端并重启即可，数据库会自动补上新增的列。
+打开 `http://<地址>:8000/` 进入管理页面，`http://<地址>:8000/docs` 可在线调试接口。升级中心服务时 `git pull` 后重新构建前端并重启即可，数据库会自动补上新增的列。`server/requirements.txt` 里有 Pillow：节点没有 Pillow 时，对比页的缩略图和预览由中心服务生成。多人使用对比页时建议在前面加一层支持 HTTP/2 的反向代理，见下文“部署建议”。
+
+### 部署建议
+
+对比页会发出大量缩略图、预览和瓦片请求。浏览器对同一地址最多建 6 个 HTTP/1.1 连接，前端据此把图片请求限制在同时 5 个（缩略图最多 3 个、预取最多 2 个，留一个给其他接口）；页面经 HTTP/2 或 HTTP/3 访问时放宽到 16 个（缩略图 8 个、预取 6 个）。uvicorn 只提供 HTTP/1.1，所以多人使用或同时对比的结果集多时，建议在中心服务前面放一个支持 HTTP/2 的反向代理，如 nginx 或 Caddy。浏览器只在 HTTPS 上使用 HTTP/2，内网可以用自签或内部 CA 的证书。
+
+原图（`/file`、`/image?kind=full`）由中心服务流式转发，代理不要缓冲，否则大文件要等代理收完才开始发给浏览器。nginx 示例：
+
+```nginx
+upstream gnm { server 127.0.0.1:8000; keepalive 32; }
+server {
+    listen 443 ssl;
+    http2 on;                      # nginx 1.25.1 之前写成 listen 443 ssl http2;
+    ssl_certificate     /etc/nginx/gnm.crt;
+    ssl_certificate_key /etc/nginx/gnm.key;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host $host;
+    proxy_read_timeout 180s;       # 不小于 GNM_IMAGE_LIST_TIMEOUT（120 秒）
+    location / { proxy_pass http://gnm; }
+    # location 匹配不到查询参数，所以 /image 整体不缓冲；缩略图等派生图都很小，影响不大
+    location ~ ^/api/results/\d+/(file|image)$ {
+        proxy_pass http://gnm;
+        proxy_buffering off;
+    }
+}
+```
+
+Caddy 自动启用 HTTPS、HTTP/2 和 HTTP/3，默认不缓冲响应，一行即可（内网地址可在站点块里加 `tls internal`，用 Caddy 自带的 CA）：
+
+```
+gnm.example.com {
+    reverse_proxy 127.0.0.1:8000
+}
+```
+
+另外：
+
+- 节点上装 Pillow。派生图在节点生成时只传几十到几百 KB 的结果；没有 Pillow 时每张原图都要先传到中心服务。
+- 节点的家目录在 NFS 上时，把 `GNM_AGENT_CACHE_DIR` 指到本地盘。
+- 8K 大图多、节点 CPU 多时调大 `GNM_AGENT_IMAGE_WORKERS`：实测 4 核环境下 6 组同时冷切到 8K 图，2 个解码线程要 3.5 秒，4 个为 2.5 秒。
+- 实测数据见 [docs/frontend.md](docs/frontend.md) 的“性能实测”。
 
 ## 添加服务器（自动安装 Agent）
 
@@ -44,7 +85,7 @@ Agent 由中心服务通过 SSH 安装和升级，不需要登录各服务器操
 
 1. 在中心主机上准备 SSH 密钥（`ssh-keygen`），用 `ssh-copy-id <用户>@<服务器>` 把公钥分发到各服务器；页面“添加服务器”对话框里也会显示中心主机的公钥。
 2. 在“服务器”页点“添加服务器”，单台填写地址和 SSH 用户；或切到“批量”，每行一台：`[用户@]地址[:SSH端口] [名称]`；或切到“从 SSH 配置导入”，勾选中心主机 `~/.ssh/config` 里的 Host。导入的服务器以 Host 别名作为名称和 SSH 连接目标，沿用 config 中的密钥、跳板机等设置，Agent 地址取 HostName。
-3. 中心服务登录后把 `agent.py`、`evaluate.py` 写到该用户的 `~/.gnm-agent/bin/`，启动 Agent 并用 crontab `@reboot` 设置开机自启。不需要 root，任务以该 SSH 用户运行。安装进度、错误和完整输出在服务器详情的“Agent”页。
+3. 中心服务登录后把 `agent.py`、`evaluate.py`、`imaging.py` 写到该用户的 `~/.gnm-agent/bin/`，启动 Agent 并用 crontab `@reboot` 设置开机自启。不需要 root，任务以该 SSH 用户运行。安装进度、错误和完整输出在服务器详情的“Agent”页。
 4. 中心服务默认通过 SSH 端口转发访问 Agent（为每台服务器维持一个 `ssh -N -L` 进程，断开后自动重建），Agent 只监听服务器本机，防火墙不需要放通 Agent 端口。如果服务器的 sshd 禁止端口转发（`AllowTcpForwarding no`，openEuler 等系统默认如此），会自动改为经 SSH 会话中继（由服务器上的 `python3` 连接 Agent，并复用 SSH 连接），不需要改 sshd 配置。个别服务器可以在“属性”里关闭转发，改为直接连接 Agent 端口（关闭后需要重新安装 Agent）。
 5. 中心服务升级后，版本落后的托管 Agent 会自动升级一次（`GNM_AUTO_UPGRADE=0` 可关闭）；也可以在页面上逐台或一键升级。升级只重启 Agent 进程，运行中的任务不受影响。
 
@@ -52,13 +93,15 @@ Agent 由中心服务通过 SSH 安装和升级，不需要登录各服务器操
 
 Agent 会自动检测 `nvidia-smi` 或 `npu-smi`，任务记录和日志保存在 `~/.gnm-agent/jobs/`。中心服务通过 Agent 读取推理结果，不限制路径，只受 Agent 运行用户（即 SSH 用户）的文件权限约束。
 
+对比页的缩略图、预览和瓦片由 Agent 用 Pillow（7.0 及以上）生成，缓存在 `~/.cache/gnm-agent/img`（默认最多 2 GB）。Pillow 是可选的：没有时 Agent 照常工作，改由中心服务把原图拉过去生成，要多传一次原图，大图明显更慢，安装输出里会给出提示。服务器默认的 `python3` 没有 Pillow、另一个 Python 环境（如 conda、venv，同样要 3.7+）有时，在 `~/.gnm-agent/agent.local.env` 里写 `export GNM_AGENT_PYTHON=/path/to/python3`，重新安装后 Agent 改用它运行。图片相关的其他设置见“配置”。
+
 评测脚本以登录用户的 `python3` 执行，需要 `numpy` 和 `Pillow`；LPIPS 另外需要 `torch` 和 `lpips`（首次运行会下载 AlexNet 权重，离线机器需提前放好缓存）。评测指定了 GPU/NPU 且装了 `torch` 时，PSNR/SSIM 也在卡上计算，否则用 numpy 在 CPU 上算；OCR 要用 GPU 需要装 `paddlepaddle-gpu`。
 
 > `npu-smi info` 的解析目前基于公开资料中的 910B 和 310P 输出样例，接入真实机器后需要核对一次。
 
 ### 手动安装 Agent（不用 SSH 时）
 
-把 `agent/` 目录复制到服务器上，以 root 执行 `sudo ./install.sh <运行用户> <token> [端口] [只允许读取的目录]`，装成 systemd 服务；然后在页面上添加服务器时不填 SSH 用户。手动安装的 Agent 不由中心服务升级。
+把 `agent/` 目录复制到服务器上，以 root 执行 `sudo ./install.sh <运行用户> <token> [端口] [只允许读取的目录]`，装成 systemd 服务；然后在页面上添加服务器时不填 SSH 用户。手动安装的 Agent 不由中心服务升级。`GNM_AGENT_*` 设置写在 `/etc/gnm-agent.env`（每行 `名称=值`，不加 `export`）；要换装了 Pillow 的 Python，改 `/etc/systemd/system/gnm-agent.service` 的 `ExecStart`。改完执行 `systemctl daemon-reload && systemctl restart gnm-agent`。
 
 ## 配置
 
@@ -83,6 +126,38 @@ Agent 会自动检测 `nvidia-smi` 或 `npu-smi`，任务记录和日志保存�
 | `GNM_DEPLOY_TIMEOUT` | `180` | 单台安装的 SSH 超时（秒） |
 | `GNM_COPY_TIMEOUT` | `21600` | 评测前把结果目录拷贝到评测服务器的超时（秒） |
 | `GNM_AUTO_UPGRADE` | `1` | 中心服务升级后，自动把版本落后的托管 Agent 升级一次；设为 `0` 关闭，改为在页面上手动升级 |
+
+中心服务的对比页图片设置（接口约定见 [docs/api.md](docs/api.md) 的“对比页的图片接口”）：
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `GNM_IMAGE_CACHE_DIR` | `./data/image-cache` | 派生图缓存和原图暂存（`spool/`）的目录，相对中心服务的工作目录 |
+| `GNM_IMAGE_CACHE_MB` | `4096` | 派生图缓存的容量（MB），超出时按最近使用删到 80% |
+| `GNM_IMAGE_SPOOL_MB` | `4096` | 原图暂存的容量（MB），节点没有 Pillow 时用；单个文件最大 1 GB |
+| `GNM_IMAGE_TIMEOUT` | `60` | 读取图片的超时（秒） |
+| `GNM_IMAGE_LIST_TIMEOUT` | `120` | 读取图片列表的超时（秒） |
+| `GNM_IMAGE_LIST_CONCURRENCY` | `2` | 每个 Agent 同时读取的图片列表数 |
+| `GNM_IMAGE_THUMB_CONCURRENCY` | `6` | 每个 Agent 同时进行的缩略图请求数 |
+| `GNM_IMAGE_MAIN_CONCURRENCY` | `6` | 每个 Agent 同时进行的预览和瓦片请求数 |
+| `GNM_IMAGE_STREAM_CONCURRENCY` | `4` | 每个 Agent 同时进行的原图和文件流数（含 `/file`） |
+| `GNM_IMAGE_QUEUE_WAIT` | `20` | 以上请求排队超过多少秒返回 503 |
+| `GNM_IMAGE_WORKERS` | CPU 核数，最多 4 | 中心服务自己生成派生图时同时解码的图片数 |
+| `GNM_IMAGE_MEM_MB` | `1024` | 中心服务生成时解码和缩放的内存预算（MB） |
+| `GNM_IMAGE_DECODED_MB` | `2048` | 中心服务留在内存里的整图解码结果（MB），同一张图切瓦片不必重复解码 |
+| `GNM_IMAGE_MAX_PIXELS` | `3e8` | 单张图片的像素上限，超过时返回 413 |
+
+Agent 的对比页图片设置。SSH 安装的写在服务器的 `~/.gnm-agent/agent.local.env`（`export 名称=值`），在页面上重新安装后生效；手动安装的见上文“手动安装 Agent”：
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `GNM_AGENT_PYTHON` | 空 | 运行 Agent 的 Python，用来指定装了 Pillow 的环境；只对 SSH 安装的 Agent 有效 |
+| `GNM_AGENT_NO_PILLOW` | 空 | 设为 `1` 时不用 Pillow，派生图改由中心服务生成 |
+| `GNM_AGENT_CACHE_DIR` | `~/.cache/gnm-agent/img` | 派生图的磁盘缓存目录（设置了 `XDG_CACHE_HOME` 时在它下面） |
+| `GNM_AGENT_CACHE_MB` | `2048` | 磁盘缓存容量（MB），超出时按最近使用删到 80%；磁盘剩余不足 1 GB 或 5% 时不再写入 |
+| `GNM_AGENT_IMAGE_WORKERS` | CPU 核数 / 4，限制在 2–6 | 同时解码的图片数 |
+| `GNM_AGENT_IMAGE_MEM_MB` | 内存 / 16，最多 1024 | 解码和缩放的内存预算（MB），超出时排队 |
+| `GNM_AGENT_DECODED_MB` | 内存 / 8，最多 2048 | 留在内存里的整图解码结果（MB），同一张图切瓦片不必重复解码；一张 8K 图约 180 MB |
+| `GNM_AGENT_MAX_PIXELS` | `3e8` | 单张图片的像素上限，超过时返回 413 |
 
 ## 推理结果格式
 
@@ -144,4 +219,7 @@ LQ 目录按文件名与样本配对：样本浏览和对比页可以把 LQ 图�
 pip install -r requirements-dev.txt
 pytest
 python scripts/export_openapi.py   # 接口变更后更新 docs/openapi.json
+(cd web && npm run typecheck && npm test)   # 前端类型检查与单元测试
 ```
+
+对比页的基准测试不随 pytest 运行：`scripts/make_compare_dataset.py` 生成测试数据集，`scripts/bench_stack.py` 在本机启动 Agent 和中心服务并登记结果集，`scripts/bench_images.py` 测后端图片接口，`web/e2e/compare-perf.mjs` 在浏览器里测交互，用法见各脚本开头和 [docs/frontend.md](docs/frontend.md)。

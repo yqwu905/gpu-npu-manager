@@ -8,6 +8,7 @@ from .deployer import Deployer
 from .db import Base, add_missing_columns, make_engine, make_session_factory
 from .poller import Poller
 from .evaluations import EvaluationCollector, EvaluationCopier
+from .images import MediaService
 from .routers import eval_configs, jobs, overview, projects, results, servers
 from .scheduler import Scheduler
 from .tunnels import Tunnels
@@ -32,6 +33,7 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
     deployer = Deployer(settings, session_factory, scheduler.agent, poller)
     deployer.recover()
     scheduler.after_round.append(deployer.auto_upgrade)
+    media = MediaService(settings, scheduler.agent)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -42,6 +44,8 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
         await scheduler.stop()
         await poller.stop()
         await tunnels.stop()
+        await scheduler.agent.aclose()
+        media.close()
 
     app = FastAPI(
         title="GPU/NPU 服务器管理平台",
@@ -56,6 +60,9 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
     app.state.scheduler = scheduler
     app.state.deployer = deployer
     app.state.copier = copier
+    app.state.media = media
+    # (结果集 ID, 评测 ID) -> (时间, (Agent 地址, 端口, 基准目录))，读取文件和图片时用，见 results._media_target
+    app.state.media_targets = {}
     app.include_router(overview.router)
     app.include_router(servers.router)
     app.include_router(jobs.router)

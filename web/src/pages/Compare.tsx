@@ -1,9 +1,12 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { resultsApi } from '../api/results'
 import { ErrorNote, MockBadge, SampleImage, Switch } from '../components/common'
 import { useMock, usePoll } from '../lib/hooks'
 import CompareImages from './CompareImages'
+import { bitmaps } from './compare/bitmapCache.ts'
+import { loader } from './compare/loader.ts'
+import { thumbs } from './compare/thumbs.ts'
 import { fmtMetric, sampleKind, sampleText } from './Results'
 
 // 三个系列的颜色在明度上拉开，色弱也能区分
@@ -30,7 +33,8 @@ function diffChars(pred: string, ref: string): { c: string; bad: boolean }[] {
 
 export default function ComparePage() {
   const [params, setParams] = useSearchParams()
-  const ids = (params.get('ids') ?? '').split(',').map(Number).filter(Boolean)
+  const idsParam = params.get('ids') ?? ''
+  const ids = useMemo(() => idsParam.split(',').map(Number).filter(Boolean), [idsParam])
   const sets = usePoll(() => resultsApi.list(), [], 0)
   const mock = useMock('results')
   const [baseIdx, setBaseIdx] = useState(0)
@@ -51,9 +55,10 @@ export default function ComparePage() {
   // 接口按第一个结果集决定样本顺序和 asc/desc 排序，所以把基线放在最前面
   const ordered = [base, ...ids.filter((id) => id !== base)]
   const apiSort = sort === 'worst' ? (metricDef?.higher_is_better ? 'asc' : 'desc') : 'spread'
+  // 样本对比只在指标视图里显示，图片视图不请求
   const samples = usePoll(
-    () => (ids.length >= 2 ? resultsApi.compareSamples(ordered, sort === 'none' || !metric ? undefined : metric, apiSort, page * pageSize, pageSize) : Promise.resolve(null)),
-    [ordered.join(','), metric, sort, page], 0,
+    () => (view === 'metrics' && ids.length >= 2 ? resultsApi.compareSamples(ordered, sort === 'none' || !metric ? undefined : metric, apiSort, page * pageSize, pageSize) : Promise.resolve(null)),
+    [view, ordered.join(','), metric, sort, page], 0,
   )
   const sampleItems = samples.data?.items ?? []
   const kind = sampleKind(sampleItems.flatMap((it) => Object.values(it.results)))
@@ -65,8 +70,11 @@ export default function ComparePage() {
     setParams(next.length ? { ids: next.join(',') } : {}, { replace: true })
   }
   const candidates = sets.data ?? []
-  const nameOf = (id: number) => m?.result_sets.find((r) => r.id === id)?.name ?? sets.data?.find((r) => r.id === id)?.name ?? `#${id}`
-  const colorOf = (id: number) => COLORS[ids.indexOf(id) % COLORS.length]
+  // 传给图片对比的函数保持引用稳定，换图、缩放时不连带重渲染
+  const nameOf = useCallback((id: number) => m?.result_sets.find((r) => r.id === id)?.name ?? sets.data?.find((r) => r.id === id)?.name ?? `#${id}`, [m, sets.data])
+  const colorOf = useCallback((id: number) => COLORS[ids.indexOf(id) % COLORS.length], [ids])
+  // 离开对比页：中止全部图片请求、释放解码缓存，缩略图只留 500 张；图片列表保留
+  useEffect(() => () => { loader.abortAll(); bitmaps.clear(); thumbs.trim(500) }, [])
 
   const valueOf = (id: number, name: string) => m?.values[String(id)]?.[name] ?? null
   // LQ 基线：取基线结果集的，没有时取其他结果集的（同一配置的 LQ 指标相同）
@@ -140,7 +148,7 @@ export default function ComparePage() {
           </button>
         </div>
 
-        {view === 'images' && <CompareImages ids={ids} nameOf={nameOf} colorOf={colorOf} mock={mock} />}
+        {view === 'images' && <CompareImages ids={ids} nameOf={nameOf} colorOf={colorOf} />}
 
         {view === 'metrics' && (
       <div className="cmp-scroll">

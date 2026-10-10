@@ -1,129 +1,143 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { resultsApi } from '../api/results'
-import type { Sample } from '../api/types'
-import { SampleImage } from '../components/common'
+import { bitmaps } from './compare/bitmapCache.ts'
+import type { CellRenderer } from './compare/CellRenderer.ts'
+import { zoomAt, type View } from './compare/geometry.ts'
+import ImageCell, { type Peer } from './compare/ImageCell'
+import { remapIndex, useImageIndexes, type ImageIndex, type IndexState } from './compare/imageIndex.ts'
+import { PRIO, loader } from './compare/loader.ts'
+import { serialOf } from './compare/match.ts'
+import { matchName, preloadMatch, retainMatcher } from './compare/matchClient.ts'
+import { atEnd, atStart, clampIdx, stepAll, syncAll, type Lens } from './compare/nav.ts'
+import { installPerf, perf } from './compare/perf.ts'
+import { createHoverQueue, createPrefetcher, planPrefetch } from './compare/prefetch.ts'
+import ThumbPanel, { type Col, type Mods } from './compare/ThumbPanel'
+import { createViewStore, panFrom } from './compare/viewStore.ts'
 
-/** 结果集中的一张图片，按文件名字母序排列 */
-interface ImageFile { name: string; path: string; url: string }
-interface ImageList { files: ImageFile[]; loading: boolean; error: string | null }
-
-const PAGE = 500
 // Mac 上 Ctrl+左键会被系统当成右键，修饰键改用 ⌘；其他平台用 Ctrl
 const IS_MAC = /mac/i.test((navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform || navigator.platform || '')
 export const MOD_KEY = IS_MAC ? '⌘' : 'Ctrl'
 const isMod = (e: { ctrlKey: boolean; metaKey: boolean }) => (IS_MAC ? e.metaKey : e.ctrlKey)
-const MAX_ZOOM = 16
-
-const baseName = (p: string) => p.split(/[\\/]/).pop() || p
-const byName = (a: ImageFile, b: ImageFile) => (a.name < b.name ? -1 : a.name > b.name ? 1 : a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
-
-/** 文件名的编辑距离，用于 Alt+单击 匹配最接近的图片 */
-function editDistance(a: string, b: string): number {
-  let prev = Array.from({ length: b.length + 1 }, (_, j) => j)
-  for (let i = 1; i <= a.length; i++) {
-    const row = [i]
-    for (let j = 1; j <= b.length; j++) row[j] = Math.min(prev[j] + 1, row[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1))
-    prev = row
-  }
-  return prev[b.length]
-}
-
-/** 文件名中最长的一段数字，用来提示各结果当前显示的是否是同一编号的图片 */
-const serialOf = (name: string) => (name.match(/\d+/g) ?? []).reduce((best, s) => (s.length > best.length ? s : best), '')
-
-/** 分页读取结果集的全部样本，取出 image 字段并按文件名排序；已读过的结果集不重复读取 */
-function useImageLists(ids: number[]) {
-  const [lists, setLists] = useState<Record<number, ImageList>>({})
-  const started = useRef(new Set<number>())
-  useEffect(() => {
-    for (const id of ids) {
-      if (started.current.has(id)) continue
-      started.current.add(id)
-      setLists((m) => ({ ...m, [id]: { files: [], loading: true, error: null } }))
-      ;(async () => {
-        const samples: Sample[] = []
-        try {
-          for (let offset = 0; ; offset += PAGE) {
-            const page = await resultsApi.samples(id, offset, PAGE)
-            samples.push(...page.items)
-            if (!page.items.length || offset + PAGE >= page.total) break
-          }
-          const files = samples
-            .filter((s) => typeof s.image === 'string')
-            .map((s) => ({ name: baseName(String(s.image)), path: String(s.image), url: resultsApi.sampleFileUrl(id, s, 'image') }))
-            .sort(byName)
-          setLists((m) => ({ ...m, [id]: { files, loading: false, error: null } }))
-        } catch (e) {
-          started.current.delete(id)
-          setLists((m) => ({ ...m, [id]: { files: [], loading: false, error: e instanceof Error ? e.message : String(e) } }))
-        }
-      })()
-    }
-  }, [ids.join(',')]) // eslint-disable-line react-hooks/exhaustive-deps
-  return lists
-}
-
-interface View { z: number; x: number; y: number }
-// 所有图片共用同一组缩放与平移；平移限制在图片层仍铺满视口的范围内
-const clampView = (z: number, x: number, y: number, w: number, h: number): View =>
-  ({ z, x: Math.min(0, Math.max(w - w * z, x)), y: Math.min(0, Math.max(h - h * z, y)) })
-const zoomAt = (v: View, factor: number, cx: number, cy: number, w: number, h: number): View => {
-  const z = Math.min(MAX_ZOOM, Math.max(1, v.z * factor))
-  const k = z / v.z
-  return clampView(z, cx - (cx - v.x) * k, cy - (cy - v.y) * k, w, h)
-}
+const LOADING: IndexState = { ix: null, loading: true, error: null }
 
 interface Props {
   ids: number[]
   nameOf: (id: number) => string
   colorOf: (id: number) => string
-  mock: boolean
 }
 
-export default function CompareImages({ ids, nameOf, colorOf, mock }: Props) {
-  const lists = useImageLists(ids)
+/**
+ * 图片对比：只做编排。图片列表在 imageIndex，缩略图栏虚拟滚动，格子由 CellRenderer 画在 canvas 上；
+ * 缩放平移走 viewStore，不触发 React 提交；当前位置 cur、对齐基准 focus、状态文字与折叠状态放在 React 里
+ */
+function CompareImages({ ids, nameOf, colorOf }: Props) {
+  perf.render('compareImages')
   const [cur, setCur] = useState<Record<number, number>>({})
   const [focusPick, setFocus] = useState<number | null>(null)
-  const [hold, setHold] = useState<{ cell: number; other: number } | null>(null)
   const [status, setStatus] = useState('')
   const [thumbsOpen, setThumbsOpen] = useState(true)
-  const [view, setView] = useState<View>({ z: 1, x: 0, y: 0 })
-  const [dragging, setDragging] = useState(false)
-  const drag = useRef<{ x: number; y: number; v: View; w: number; h: number } | null>(null)
+  const [store] = useState(() => createViewStore())
+  const [cells] = useState(() => new Map<number, CellRenderer>())
+  const [pf] = useState(() => ({ main: createPrefetcher(), hover: createHoverQueue() }))
+  const dir = useRef<1 | -1>(1)
+  const altSeq = useRef(0)
   const gridRef = useRef<HTMLDivElement | null>(null)
+  const zoomRef = useRef<HTMLSpanElement | null>(null)
 
-  const filesOf = (id: number) => lists[id]?.files ?? []
-  const idxOf = (id: number) => Math.min(cur[id] ?? 0, Math.max(0, filesOf(id).length - 1))
-  const fileOf = (id: number): ImageFile | undefined => filesOf(id)[idxOf(id)]
+  // 列表在后台重新验证后变了：按路径换算当前位置
+  const states = useImageIndexes(ids, (id, prev, next) =>
+    setCur((c) => (c[id] === undefined ? c : { ...c, [id]: remapIndex(prev, next, clampIdx(c[id], prev.n)) })))
+  const lens: Lens = useMemo(() => Object.fromEntries(ids.map((id) => [id, states[id]?.ix?.n ?? 0])), [ids, states])
   const focus = focusPick !== null && ids.includes(focusPick) ? focusPick : ids[0]
+  const live = useRef({ ids, states, lens, cur, nameOf })
+  live.current = { ids, states, lens, cur, nameOf }
 
-  const pick = (id: number, i: number, e: ReactMouseEvent) => {
-    const name = filesOf(id)[i]?.name ?? ''
+  useEffect(() => installPerf(), [])
+  useEffect(() => retainMatcher(), [])
+  // 列表一到就把文件名交给 Worker，第一次 Alt+单击不必再传
+  useEffect(() => preloadMatch(ids.flatMap((id) => states[id]?.ix ?? [])), [ids, states])
+
+  const geom = () => cells.values().next().value?.geom() ?? null
+
+  /** 预取：各结果集 ±1、+2 的预览与 +1 的缩略图，放大时再加 +1 同一视口的无损层 */
+  const refreshPrefetch = useCallback(() => {
+    const { ids, states, cur } = live.current
+    const g = geom()
+    if (!g) { pf.main.clear(); return }
+    const sets = ids.flatMap((id) => { const ix = states[id]?.ix; return ix?.n ? [{ ix, i: clampIdx(cur[id], ix.n) }] : [] })
+    const v = store.get()
+    // 放大时下一张的无损层等各格当前图都加载完再取，免得和眼前的视图抢服务端解码（格子加载完会回调这里）
+    const zoom = v.z > 1 && [...cells.values()].every((c) => c.settled()) ? { v, cw: g.cw, ch: g.ch, dpr: g.dpr } : undefined
+    // 只有 pin 住的位图淘汰不掉；没 pin 的缓存放得下新的预取，满了就按 LRU 淘汰
+    pf.main.update(planPrefetch({ sets, dir: dir.current, size: g.pv, budget: bitmaps.budget, used: bitmaps.pinnedBytes(), zoom }))
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { refreshPrefetch() }, [cur, states, ids, refreshPrefetch])
+  useEffect(() => () => { pf.main.clear(); pf.hover.clear() }, [pf])
+  // 取消了全部结果集：没有格子在画，释放预取与悬停句柄，中止剩下的请求（解码中的结果也不再进缓存），解码结果全部释放
+  useEffect(() => {
+    if (ids.length) return
+    pf.main.clear()
+    pf.hover.clear()
+    loader.abortAll()
+    const b = bitmaps.budget
+    bitmaps.budget = 0
+    bitmaps.trim()
+    bitmaps.budget = b
+  }, [ids.length, pf])
+
+  const pick = useCallback((id: number, i: number, e: Mods) => {
+    const { ids, states, lens, nameOf } = live.current
+    const ix = states[id]?.ix
+    if (!ix || i >= ix.n) return
+    const name = ix.names[i]
+    const seq = ++altSeq.current
+    perf.mark('cmp:switch')
     if (isMod(e)) {
-      setCur((c) => ({ ...c, ...Object.fromEntries(ids.map((x) => [x, Math.min(i, Math.max(0, filesOf(x).length - 1))])) }))
+      setCur((c) => syncAll(c, ids, lens, i))
       setStatus(`${MOD_KEY} 按序号同步 · 第 ${i + 1} 张`)
     } else if (e.altKey) {
-      e.preventDefault()
-      const next: Record<number, number> = { [id]: i }
-      for (const x of ids) {
-        if (x === id) continue
-        let best = 0, bd = Infinity
-        filesOf(x).forEach((f, k) => { const d = editDistance(name, f.name); if (d < bd) { bd = d; best = k } })
-        next[x] = best
-      }
+      // 文件名完全相同的当帧应用，其余交给 Worker 按编辑距离找最接近的；期间又有新操作时丢弃结果
+      const targets = ids.filter((x) => x !== id).map((x) => states[x]?.ix).filter((t): t is ImageIndex => !!t)
+      const r = matchName(name, ix, targets, Object.fromEntries(targets.map((t) => [t.id, Math.min(i, t.n - 1)])))
+      const next: Record<number, number> = { [id]: i, ...r.exact }
+      for (const x of ids) if (x !== id && !states[x]?.ix?.n) next[x] = 0
       setCur((c) => ({ ...c, ...next }))
-      setStatus(`Alt 文件名匹配 · ${name}`)
+      if (r.pending) {
+        setStatus(`Alt 文件名匹配中… · ${name}`)
+        r.pending.then((res) => {
+          if (!res || seq !== altSeq.current) return
+          setCur((c) => ({ ...c, ...res }))
+          setStatus(`Alt 文件名匹配 · ${name}`)
+        })
+      } else setStatus(`Alt 文件名匹配 · ${name}`)
     } else {
       setCur((c) => ({ ...c, [id]: i }))
       setStatus(`仅切换 ${nameOf(id)} · ${name}`)
     }
     setFocus(id)
-  }
+  }, [])
 
-  const step = useCallback((d: number) => {
-    setCur((c) => ({ ...c, ...Object.fromEntries(ids.map((x) => [x, Math.min(Math.max(0, (lists[x]?.files.length ?? 0) - 1), Math.max(0, Math.min(c[x] ?? 0, (lists[x]?.files.length ?? 1) - 1) + d))])) }))
+  const step = useCallback((d: 1 | -1) => {
+    const { ids, lens } = live.current
+    altSeq.current++
+    dir.current = d
+    loader.noteStep()
+    perf.mark('cmp:switch')
+    setCur((c) => stepAll(c, ids, lens, d))
     setStatus(`${d < 0 ? '上一张' : '下一张'} · 全部结果`)
-  }, [ids.join(','), lists]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [])
+
+  // 悬停预取：修饰键按住时取全部结果集的同一序号
+  const hover = useCallback((id: number, i: number, e: Mods) => {
+    const { ids, states } = live.current
+    const g = geom()
+    if (!g) return
+    for (const x of isMod(e) ? ids : [id]) {
+      const ix = states[x]?.ix
+      const k = ix ? Math.min(i, ix.n - 1) : -1
+      if (ix && k >= 0 && ix.sizes[k] !== -1) pf.hover.add(resultsApi.imageUrl(x, ix.paths[k], ix.vs[k], 'preview', { size: g.pv }), PRIO.next)
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ←/↑ 上一张，→/↓ 下一张；按着修饰键或在输入框里时不处理
   useEffect(() => {
@@ -138,105 +152,84 @@ export default function CompareImages({ ids, nameOf, colorOf, mock }: Props) {
     return () => window.removeEventListener('keydown', onKey)
   }, [step])
 
-  // React 的 onWheel 是 passive 监听，无法阻止浏览器自带的 Ctrl+滚轮页面缩放，所以挂原生监听
+  // 缩放平移挂原生监听：React 的 onWheel 是 passive 的，拦不住浏览器自带的 Ctrl+滚轮页面缩放；改 store 不经过 React
   useEffect(() => {
     const el = gridRef.current
     if (!el) return
+    const vpOf = (t: EventTarget | null) => (t as HTMLElement | null)?.closest?.<HTMLElement>('[data-viewport]') ?? null
     const onWheel = (e: WheelEvent) => {
       // Mac 触控板双指捏合以 ctrlKey=true 的滚轮事件送达，一并当作缩放
       if (!isMod(e) && !(IS_MAC && e.ctrlKey)) return
-      const vp = (e.target as HTMLElement).closest?.('[data-viewport]')
+      const vp = vpOf(e.target)
       if (!vp) return
       e.preventDefault()
       const r = vp.getBoundingClientRect()
-      setView((v) => zoomAt(v, Math.exp(-e.deltaY * 0.0015), e.clientX - r.left, e.clientY - r.top, r.width, r.height))
+      store.zoom(Math.exp(-e.deltaY * 0.0015), e.clientX - r.left, e.clientY - r.top, r.width, r.height)
+    }
+    let drag: { id: number; x: number; y: number; v: View; w: number; h: number } | null = null
+    const onDown = (e: PointerEvent) => {
+      const vp = vpOf(e.target)
+      if (!vp || !isMod(e) || e.button !== 0 || (e.target as HTMLElement).closest('button')) return
+      e.preventDefault()
+      vp.setPointerCapture(e.pointerId)
+      const r = vp.getBoundingClientRect()
+      drag = { id: e.pointerId, x: e.clientX, y: e.clientY, v: store.get(), w: r.width, h: r.height }
+      el.dataset.drag = '1'
+    }
+    const onMove = (e: PointerEvent) => {
+      if (drag && e.pointerId === drag.id) store.set(panFrom(drag.v, e.clientX - drag.x, e.clientY - drag.y, drag.w, drag.h))
+    }
+    const onUp = (e: PointerEvent) => {
+      if (!drag || e.pointerId !== drag.id) return
+      drag = null
+      delete el.dataset.drag
     }
     el.addEventListener('wheel', onWheel, { passive: false })
-    return () => el.removeEventListener('wheel', onWheel)
-  }, [])
+    el.addEventListener('pointerdown', onDown)
+    el.addEventListener('pointermove', onMove)
+    el.addEventListener('pointerup', onUp)
+    el.addEventListener('pointercancel', onUp)
+    el.addEventListener('lostpointercapture', onUp)
+    return () => {
+      el.removeEventListener('wheel', onWheel)
+      el.removeEventListener('pointerdown', onDown)
+      el.removeEventListener('pointermove', onMove)
+      el.removeEventListener('pointerup', onUp)
+      el.removeEventListener('pointercancel', onUp)
+      el.removeEventListener('lostpointercapture', onUp)
+    }
+  }, [store])
+
+  // 缩放比例文字与光标样式随 store 每帧更新；放大后停下 150 ms 再刷新无损层预取
+  useEffect(() => {
+    let t: ReturnType<typeof setTimeout> | null = null
+    const off = store.subscribe((v) => {
+      if (zoomRef.current) zoomRef.current.textContent = `${Math.round(v.z * 100)}%`
+      const g = gridRef.current
+      if (g) { if (v.z > 1) g.dataset.zoomed = '1'; else delete g.dataset.zoomed }
+      if (t) clearTimeout(t)
+      t = setTimeout(refreshPrefetch, 150)
+    })
+    return () => { off(); if (t) clearTimeout(t) }
+  }, [store, refreshPrefetch])
+  useEffect(() => () => store.dispose(), [store])
 
   const zoomBy = (factor: number) => {
     const r = gridRef.current?.querySelector('[data-viewport]')?.getBoundingClientRect()
     if (!r) return
-    setView((v) => zoomAt(v, factor, r.width / 2, r.height / 2, r.width, r.height))
-  }
-
-  const panStart = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!isMod(e) || e.button !== 0 || (e.target as HTMLElement).closest('button')) return
-    e.preventDefault()
-    e.currentTarget.setPointerCapture(e.pointerId)
-    const r = e.currentTarget.getBoundingClientRect()
-    drag.current = { x: e.clientX, y: e.clientY, v: view, w: r.width, h: r.height }
-    setDragging(true)
-  }
-  const panMove = (e: ReactPointerEvent<HTMLDivElement>) => {
-    const d = drag.current
-    if (d) setView(clampView(d.v.z, d.v.x + e.clientX - d.x, d.v.y + e.clientY - d.y, d.w, d.h))
-  }
-  const panEnd = () => { if (drag.current) { drag.current = null; setDragging(false) } }
-
-  const holdStart = (cell: number, other: number) => setHold({ cell, other })
-  const holdEnd = () => setHold(null)
-  const holdKey = (cell: number, other: number) => (e: ReactKeyboardEvent) => {
-    if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); if (!hold) holdStart(cell, other) }
+    store.set((v) => zoomAt(v, factor, r.width / 2, r.height / 2, r.width, r.height))
   }
 
   const n = ids.length
-  const cols = n <= 1 ? 1 : n <= 4 ? 2 : 3
-  const atStart = ids.every((id) => idxOf(id) === 0)
-  const atEnd = ids.every((id) => idxOf(id) >= filesOf(id).length - 1)
-  const focusSerial = (() => { const f = fileOf(focus); return f ? serialOf(f.name) : '' })()
-  const transform = `translate(${view.x}px, ${view.y}px) scale(${view.z})`
-  const thumbW = Math.min(Math.max(n, 1), 4) * 120 + 10
+  const gridCols = n <= 1 ? 1 : n <= 4 ? 2 : 3
+  const cols: Col[] = useMemo(() => ids.map((id) => ({ id, name: nameOf(id), color: colorOf(id), st: states[id] ?? LOADING })), [ids, nameOf, colorOf, states])
+  const peers = useMemo(() => new Map(ids.map((id) => [id, ids.filter((o) => o !== id).map((o): Peer => ({ id: o, name: nameOf(o), color: colorOf(o) }))])), [ids, nameOf, colorOf])
+  const focusIx = states[focus]?.ix
+  const focusSerial = focusIx?.n ? serialOf(focusIx.names[clampIdx(cur[focus], focusIx.n)]) : ''
 
   return (
     <>
-      <div className="cmp-fold" style={{ flexBasis: thumbsOpen ? thumbW : 44 }}>
-        <section aria-label="缩略图" aria-hidden={!thumbsOpen} className={thumbsOpen ? 'card cmp-panel' : 'card cmp-panel off'} style={{ width: thumbW }}>
-          <div className="cmp-panel-head">
-            <h2 className="grow" style={{ fontSize: 15 }}>缩略图</h2>
-            <button type="button" className="cmp-icon-btn" onClick={() => setThumbsOpen(false)} aria-label="折叠缩略图栏" aria-expanded="true">‹</button>
-          </div>
-          <div style={{ flex: '1 1 0', minHeight: 0, overflow: 'auto' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.max(n, 1)}, 112px)`, gap: 8, padding: '0 8px 8px', alignItems: 'start' }}>
-              {ids.map((id) => {
-                const list = lists[id]
-                const files = list?.files ?? []
-                return (
-                  <div key={id} className="col" style={{ gap: 6, minWidth: 0 }}>
-                    <button type="button" className="cmp-col-head" onClick={() => setFocus(id)} aria-label={`以 ${nameOf(id)} 为对齐基准`} style={{ borderBottomColor: colorOf(id) }}>
-                      <span className="row" style={{ gap: 6, minWidth: 0, width: '100%' }}>
-                        <span className="dot" style={{ width: 9, height: 9, background: colorOf(id) }} />
-                        <span className="mono ellipsis" style={{ fontSize: 12, fontWeight: id === focus ? 600 : 400 }}>{nameOf(id)}</span>
-                      </span>
-                      <span className="mono lbl" style={{ fontSize: 11 }}>{files.length ? `${idxOf(id) + 1} / ${files.length}` : list?.loading ? '加载中' : '0 张'}</span>
-                    </button>
-                    {list?.error && <span className="lbl" style={{ color: '#A1281F' }}>{list.error}</span>}
-                    {files.map((f, i) => {
-                      const on = idxOf(id) === i
-                      return (
-                        <button key={f.path} type="button" className="cmp-thumb" onClick={(e) => pick(id, i, e)} aria-current={on} aria-label={`${nameOf(id)} ${f.name}`}
-                          title={`${f.name}\n单击：仅切换该结果\n${MOD_KEY}+单击：按序号同步全部\nAlt+单击：按文件名匹配`}
-                          style={on ? { background: 'var(--bg)', boxShadow: `inset 0 0 0 2px ${colorOf(id)}` } : undefined}>
-                          <SampleImage src={f.url} seed={f.name} mock={mock} label={f.name} style={{ borderRadius: 4 }} />
-                          <span className="row" style={{ gap: 4, width: '100%', minWidth: 0 }}>
-                            <span className="mono" style={{ fontSize: 10, color: 'var(--faint)', flexShrink: 0 }}>{i + 1}</span>
-                            <span className="mono ellipsis" style={{ fontSize: 11 }}>{f.name}</span>
-                          </span>
-                        </button>
-                      )
-                    })}
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        </section>
-        <button type="button" className={thumbsOpen ? 'cmp-rail off' : 'cmp-rail'} onClick={() => setThumbsOpen(true)} aria-label="展开缩略图栏" aria-expanded="false">
-          <span aria-hidden="true">›</span>
-          <span className="cmp-rail-title">缩略图</span>
-        </button>
-      </div>
+      <ThumbPanel cols={cols} cur={cur} focus={focus} open={thumbsOpen} setOpen={setThumbsOpen} modKey={MOD_KEY} onPick={pick} onFocus={setFocus} onHover={hover} />
 
       <section aria-label="图片对比" className="col" style={{ flex: '1 1 0', minWidth: 0, minHeight: 0, gap: 10 }}>
         <div className="card row wrap" style={{ gap: '8px 16px', padding: '10px 14px', fontSize: 12, color: 'var(--ink-2)' }}>
@@ -250,67 +243,29 @@ export default function CompareImages({ ids, nameOf, colorOf, mock }: Props) {
 
         <div className="row wrap" style={{ gap: 8 }}>
           <span className="row" style={{ gap: 0 }}>
-            <button type="button" className="btn sm" onClick={() => step(-1)} disabled={atStart} style={{ borderRadius: '6px 0 0 6px' }}>‹ 上一张</button>
-            <button type="button" className="btn sm" onClick={() => step(1)} disabled={atEnd} style={{ borderRadius: '0 6px 6px 0', borderLeft: 0 }}>下一张 ›</button>
+            <button type="button" className="btn sm" onClick={() => step(-1)} disabled={atStart(cur, ids, lens)} style={{ borderRadius: '6px 0 0 6px' }}>‹ 上一张</button>
+            <button type="button" className="btn sm" onClick={() => step(1)} disabled={atEnd(cur, ids, lens)} style={{ borderRadius: '0 6px 6px 0', borderLeft: 0 }}>下一张 ›</button>
           </span>
           <span className="row lbl" style={{ gap: 4 }}><kbd className="kbd">← ↑</kbd><kbd className="kbd">→ ↓</kbd>所有结果各自前进 / 后退一张，保持当前对齐</span>
           <span className="grow" />
           <button type="button" className="btn sm" onClick={() => zoomBy(1 / 1.5)} aria-label="缩小">−</button>
-          <span className="mono" style={{ minWidth: 52, textAlign: 'center', fontSize: 13 }}>{Math.round(view.z * 100)}%</span>
+          <span ref={zoomRef} className="mono" style={{ minWidth: 52, textAlign: 'center', fontSize: 13 }}>100%</span>
           <button type="button" className="btn sm" onClick={() => zoomBy(1.5)} aria-label="放大">＋</button>
-          <button type="button" className="btn sm" onClick={() => setView({ z: 1, x: 0, y: 0 })}>适应窗口</button>
+          <button type="button" className="btn sm" onClick={() => store.reset()}>适应窗口</button>
         </div>
 
         {n === 0 && <div className="card empty">在左侧勾选至少一个推理结果</div>}
 
-        <div ref={gridRef} style={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', display: 'grid', gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap: 10, alignContent: 'start' }}>
+        <div ref={gridRef} className="cmp-grid" style={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', display: 'grid', gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))`, gap: 10, alignContent: 'start' }}>
           {ids.map((id) => {
-            const holding = hold?.cell === id
-            const shown = holding ? hold.other : id
-            const file = fileOf(shown)
-            const own = fileOf(id)
-            const mismatch = !!own && !!focusSerial && serialOf(own.name) !== '' && serialOf(own.name) !== focusSerial
+            const st = states[id] ?? LOADING, ix = st.ix
+            const i = ix?.n ? clampIdx(cur[id], ix.n) : 0
+            const own = ix?.n ? serialOf(ix.names[i]) : ''
             return (
-              <figure key={id} className="card cmp-cell" style={{ boxShadow: id === focus ? `0 0 0 2px ${colorOf(id)}` : undefined }}>
-                <figcaption className="row" style={{ gap: 8, padding: '8px 10px', borderTop: `3px solid ${colorOf(id)}`, borderBottom: '1px solid var(--border-soft)' }}>
-                  <button type="button" className="cmp-name-btn" onClick={() => setFocus(id)} aria-label={`以 ${nameOf(id)} 为对齐基准`}>
-                    <span className="dot" style={{ width: 10, height: 10, background: colorOf(id) }} />
-                    <span className="mono ellipsis" style={{ fontSize: 13, fontWeight: 500 }}>{nameOf(id)}</span>
-                  </button>
-                  <span className="grow" />
-                  {mismatch && <span className="badge" style={{ background: '#FFF4D6', color: '#5C3F00' }}>编号不一致</span>}
-                  <span className="mono lbl">{filesOf(id).length ? `${idxOf(id) + 1} / ${filesOf(id).length}` : lists[id]?.loading ? '加载中' : '无图片'}</span>
-                </figcaption>
-                <div data-viewport="1" className="cmp-vp" onPointerDown={panStart} onPointerMove={panMove} onPointerUp={panEnd} onPointerCancel={panEnd}
-                  style={{ cursor: dragging ? 'grabbing' : view.z > 1 ? 'grab' : undefined }}>
-                  <div className="cmp-layer" style={{ transform }}>
-                    {file && (mock
-                      ? <SampleImage src={file.url} seed={file.name} mock label={`${nameOf(shown)} ${file.name}`} style={{ width: '100%', height: '100%', borderRadius: 0, aspectRatio: 'auto' }} />
-                      : <img src={file.url} alt={`${nameOf(shown)} ${file.name}`} draggable={false} style={{ imageRendering: view.z > 1 ? 'pixelated' : undefined }} />)}
-                  </div>
-                  {holding && (
-                    <div className="cmp-holding">
-                      <span className="dot" style={{ background: colorOf(shown) }} />
-                      正在显示 {nameOf(shown)}
-                    </div>
-                  )}
-                  <div className="cmp-hold-btns">
-                    {ids.filter((o) => o !== id).map((o) => (
-                      <button key={o} type="button" className={holding && hold.other === o ? 'cmp-hold on' : 'cmp-hold'}
-                        onPointerDown={() => holdStart(id, o)} onPointerUp={holdEnd} onPointerLeave={holdEnd}
-                        onKeyDown={holdKey(id, o)} onKeyUp={holdEnd} onBlur={holdEnd}
-                        aria-label={`按住查看 ${nameOf(o)} 的当前图`}>
-                        <span className="dot" style={{ width: 10, height: 10, background: colorOf(o), boxShadow: '0 0 0 1.5px #FFFFFF' }} />
-                        <span className="ellipsis" style={{ maxWidth: 120 }}>{nameOf(o)}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="row" style={{ gap: 8, padding: '8px 10px' }}>
-                  <span className="mono ellipsis grow" style={{ fontSize: 12 }} title={file?.path}>{file?.name ?? '-'}</span>
-                  {n > 1 && <span className="lbl" style={{ whiteSpace: 'nowrap' }}>按住右下角按钮切换</span>}
-                </div>
-              </figure>
+              <ImageCell key={id} id={id} name={nameOf(id)} color={colorOf(id)} focus={id === focus}
+                mismatch={!!focusSerial && own !== '' && own !== focusSerial}
+                count={ix?.n ? `${i + 1} / ${ix.n}` : st.loading ? '加载中' : '无图片'}
+                ix={ix} i={i} peers={peers.get(id)!} store={store} cells={cells} nameOf={nameOf} onFocus={setFocus} onPrefetch={refreshPrefetch} />
             )
           })}
         </div>
@@ -318,3 +273,5 @@ export default function CompareImages({ ids, nameOf, colorOf, mock }: Props) {
     </>
   )
 }
+
+export default memo(CompareImages)

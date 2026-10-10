@@ -150,15 +150,29 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .cmp-set { display: flex; align-items: flex-start; gap: 10px; padding: 10px; border-radius: 6px; cursor: pointer; }
 .cmp-set:hover { background: #F7F8F5; }
 .cmp-set input { width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--ink); flex-shrink: 0; }
-.cmp-col-head { position: sticky; top: 0; z-index: 1; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 4px 6px; border: 0; border-bottom: 3px solid; background: var(--surface); font: inherit; text-align: left; color: var(--ink); cursor: pointer; }
+.cmp-col-head { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 4px 6px; border: 0; border-bottom: 3px solid; background: var(--surface); font: inherit; text-align: left; color: var(--ink); cursor: pointer; }
 .cmp-thumb { display: flex; flex-direction: column; gap: 4px; padding: 4px; border: 0; border-radius: 6px; background: transparent; font: inherit; text-align: left; color: var(--ink); cursor: pointer; }
 .cmp-thumb:hover { background: #F7F8F5; }
+.cmp-thumb-ph { display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--muted); }
+/* 缩略图栏虚拟滚动：只有一个滚动容器，列标题吸顶，行绝对定位；行高固定 112px（含 6px 间距） */
+.cmp-vlist { flex: 1 1 0; min-height: 0; overflow: auto; overflow-anchor: none; contain: strict; }
+.cmp-vhead { position: sticky; top: 0; z-index: 2; display: grid; gap: 8px; min-width: 100%; padding: 0 8px 6px; background: var(--surface); }
+.cmp-vspace { position: relative; }
+.cmp-vbody { position: absolute; left: 0; top: 0; width: 100%; }
+.cmp-vrow { position: absolute; left: 0; height: 112px; display: grid; grid-template-columns: repeat(var(--cols), 112px); gap: 8px; padding: 0 8px; align-items: start; }
+.cmp-vrow .cmp-thumb { height: 106px; overflow: hidden; }
 .cmp-cell { margin: 0; display: flex; flex-direction: column; overflow: hidden; }
 .cmp-name-btn { display: flex; align-items: center; gap: 7px; min-width: 0; height: 28px; padding: 0 6px; margin-left: -6px; border: 0; border-radius: 5px; background: transparent; font: inherit; color: var(--ink); cursor: pointer; }
 .cmp-name-btn:hover { background: var(--bg); }
 .cmp-vp { position: relative; aspect-ratio: 4 / 3; overflow: hidden; background: var(--track); touch-action: none; }
-.cmp-layer { position: absolute; inset: 0; transform-origin: 0 0; }
-.cmp-layer img { width: 100%; height: 100%; object-fit: contain; display: block; user-select: none; }
+/* 画布铺满视口；格子尺寸变化的过渡期间只被 CSS 拉伸，停下后才按设备像素重新分配 */
+.cmp-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.cmp-grid[data-zoomed] .cmp-vp { cursor: grab; }
+.cmp-grid[data-drag] .cmp-vp { cursor: grabbing; }
+.cmp-ph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: 12px; font-size: 13px; color: var(--muted); text-align: center; word-break: break-all; }
+.cmp-badges { position: absolute; right: 8px; top: 8px; display: flex; gap: 6px; pointer-events: none; }
+.cmp-tier { background: rgba(21, 24, 28, 0.72); color: #FFFFFF; }
+.cmp-ph[hidden], .cmp-tier[hidden], .cmp-holding[hidden] { display: none; }
 .cmp-holding { position: absolute; left: 10px; top: 10px; display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 13px; background: rgba(21, 24, 28, 0.86); color: #FFFFFF; font-size: 12px; }
 .cmp-hold-btns { position: absolute; right: 8px; bottom: 8px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: calc(100% - 16px); }
 .cmp-hold { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px 0 8px; border: 1px solid rgba(255, 255, 255, 0.5); border-radius: 15px; background: rgba(21, 24, 28, 0.62); color: #FFFFFF; font: inherit; font-size: 12px; cursor: pointer; user-select: none; touch-action: none; }

@@ -7,6 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
+    "test": "node --test 'src/**/*.test.ts'",
+    "e2e": "node e2e/compare-mock.mjs",
+    "e2e:perf": "node e2e/compare-perf.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

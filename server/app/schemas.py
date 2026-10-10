@@ -359,6 +359,20 @@ class SamplePage(BaseModel):
     )
 
 
+class ImageList(BaseModel):
+    """结果集的全部图片（对比页用），只用于接口文档：实际响应由 Agent 生成后原样转发（gzip）。"""
+
+    total: int = Field(description="files 的条数")
+    missing: int = Field(description="不存在或不可读的文件数（size 为 -1）")
+    skipped: int = Field(description="没有字符串 image 字段的记录、不是合法 JSON 的行")
+    truncated: bool = Field(description="超过 200000 条时截断")
+    source: Literal["agent", "samples"] = Field(description="agent：Agent 读取文件信息生成；samples：旧版 Agent，由样本拼出，没有大小和版本号")
+    files: list[tuple[str, int | None, str]] = Field(
+        description="[路径, 字节数, 版本号]，按 (文件名, 路径) 排序、去重，前端不要再排序。路径即样本的 image 字段；"
+        "字节数 -1 为文件不存在，null 为未知；版本号为空表示未知，图片 URL 不带 v，不能长期缓存"
+    )
+
+
 class EvalConfigBase(BaseModel):
     metrics: list[MetricName] = Field(min_length=1, description="评测哪些指标")
     label_file: str | None = Field(default=None, description="文字指标的 PaddleOCR 格式标注文件")
