@@ -117,13 +117,13 @@ const BIG_PX = 4_000_000
 const DECODE_MAX = { big: 2, small: 4, tiny: 8 }
 const LABEL: Record<number, string> = { 404: '文件不存在', 413: '图片过大', 415: '无法解码', 501: '无法生成预览', 503: '服务繁忙' }
 
-/** 解析本模块生成的图片 URL（/api/results/{id}/image?...） */
+/** 解析本模块生成的图片 URL（/api/results/{id}/image?...；LQ 数据集为 /api/lq-sets/{id}/image?...，id 取负） */
 export function imageUrlParts(url: string): { id: number; path: string; kind: ImageKind; size?: number; l?: number; x?: number; y?: number } | null {
-  const m = /\/results\/(\d+)\/image\?(.*)$/.exec(url)
+  const m = /\/(results|lq-sets)\/(\d+)\/image\?(.*)$/.exec(url)
   if (!m) return null
-  const q = new URLSearchParams(m[2])
+  const q = new URLSearchParams(m[3])
   const num = (k: string) => (q.has(k) ? Number(q.get(k)) : undefined)
-  return { id: Number(m[1]), path: q.get('path') ?? '', kind: (q.get('kind') as ImageKind | null) ?? 'thumb', size: num('size'), l: num('l'), x: num('x'), y: num('y') }
+  return { id: m[1] === 'lq-sets' ? -Number(m[2]) : Number(m[2]), path: q.get('path') ?? '', kind: (q.get('kind') as ImageKind | null) ?? 'thumb', size: num('size'), l: num('l'), x: num('x'), y: num('y') }
 }
 
 /** 页面或 /api 请求走的是 h2/h3 时可以放宽并发 */

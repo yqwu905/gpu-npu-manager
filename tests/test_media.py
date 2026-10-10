@@ -123,6 +123,31 @@ def test_images_list(env, monkeypatch):
     assert resp.status_code == 422 and resp.json()["detail"].startswith("读取图片列表失败")
 
 
+def test_lq_sets(env):
+    """评测用过的 LQ 目录按（评测服务器, 目录）去重列出，图片列表和图片接口与结果集相同。"""
+    from app.models import Evaluation, ResultSet
+
+    client, data, server_id = env
+    a = register(client, server_id, data / "model-a")
+    gt = str(data / "gt")
+    with client.app.state.session_factory() as session:
+        result = session.get(ResultSet, a)
+        for lq_dir in (gt, gt, None):
+            session.add(Evaluation(result_set=result, metrics=["psnr"], lq_dir=lq_dir, status="succeeded", output_dir="/x"))
+        session.commit()
+        first = min(e.id for e in result.evaluations if e.lq_dir)
+
+    sets = client.get("/api/lq-sets").json()
+    assert [(x["id"], x["name"], x["server_id"]) for x in sets] == [(first, "gt", server_id)]
+    resp = client.get(f"/api/lq-sets/{first}/images")
+    assert resp.status_code == 200, resp.text
+    assert [f[0] for f in resp.json()["files"]] == ["0.png", "1.png", "2.png"]
+    resp = client.get(f"/api/lq-sets/{first}/image", params={"path": "1.png", "kind": "thumb"})
+    assert resp.status_code == 200 and resp.headers["x-image-width"] == "32"
+    assert client.get(f"/api/lq-sets/{first + 2}/images").status_code == 404  # 没有 LQ 目录的评测
+    assert client.get("/api/lq-sets/9999/image", params={"path": "1.png"}).status_code == 404
+
+
 def test_image_kinds(env, monkeypatch):
     client, data, server_id = env
     res = data / "model-a"

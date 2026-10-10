@@ -359,6 +359,17 @@ class SamplePage(BaseModel):
     )
 
 
+class LqSetOut(BaseModel):
+    """评测用过的 LQ 数据集，按（评测服务器, LQ 目录）去重；id 为第一次用到它的评测 ID。"""
+
+    id: int
+    name: str = Field(description="LQ 目录名")
+    lq_dir: str
+    server_id: int
+    server_name: str
+    config_name: str | None = Field(default=None, description="评测配置名")
+
+
 class ImageList(BaseModel):
     """结果集的全部图片（对比页用），只用于接口文档：实际响应由 Agent 生成后原样转发（gzip）。"""
 

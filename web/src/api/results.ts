@@ -2,13 +2,15 @@
 import { request, requestFull, withFallback } from './client.ts'
 import { mockResults } from '../mock/results.ts'
 import type {
-  CompareMetrics, CompareSamples, CompareSort, EvalConfig, EvalConfigBody, Evaluation, EvaluationCreate, Evaluator, ImageKind, ImageList, Project,
+  CompareMetrics, CompareSamples, CompareSort, EvalConfig, EvalConfigBody, Evaluation, EvaluationCreate, Evaluator, ImageKind, ImageList, LqSet, Project,
   ResultFilters, ResultSet, ResultSetCreate, ResultSetUpdate, Sample, SamplePage, TagCount,
 } from './types'
 
 const fb = <T>(real: () => Promise<T>, mock: () => T | Promise<T>) => withFallback('results', real, mock)
 // 预览尺寸向上取到后端的档位，保证同一张图的 URL 一致
 const previewBucket = (s: number) => (s <= 1024 ? 1024 : s <= 2048 ? 2048 : 3072)
+/** 图片对比里 LQ 数据集用负数 ID（-LQ 数据集 ID）与结果集并列 */
+const mediaBase = (id: number) => (id < 0 ? `/lq-sets/${-id}` : `/results/${id}`)
 
 export const resultsApi = {
   list: (filters: ResultFilters = {}) =>
@@ -43,10 +45,10 @@ export const resultsApi = {
   images: (id: number, opts: { signal?: AbortSignal; etag?: string } = {}) =>
     fb(
       async () => {
-        const r = await requestFull<ImageList>('GET', `/results/${id}/images`, { signal: opts.signal, headers: opts.etag ? { 'If-None-Match': opts.etag } : undefined })
+        const r = await requestFull<ImageList>('GET', `${mediaBase(id)}/images`, { signal: opts.signal, headers: opts.etag ? { 'If-None-Match': opts.etag } : undefined })
         return { list: r.data, etag: r.headers.get('ETag') ?? (r.status === 304 ? opts.etag ?? '' : '') }
       },
-      () => ({ list: opts.etag === 'mock' ? null : mockResults.images(id), etag: 'mock' }),
+      () => ({ list: opts.etag === 'mock' ? null : id < 0 ? mockResults.lqImages() : mockResults.images(id), etag: 'mock' }),
     ),
   /**
    * 图片的缩略图 / 预览 / 原图 / 瓦片。参数顺序固定为 path, v, kind, size, l, x, y, evaluation_id，缺省的不出现；
@@ -59,8 +61,9 @@ export const resultsApi = {
     if (kind === 'preview') q += `&size=${previewBucket(o.size ?? 2048)}`
     if (kind === 'tile') q += `&l=${o.l ?? 0}&x=${o.x ?? 0}&y=${o.y ?? 0}`
     if (o.evaluationId) q += `&evaluation_id=${o.evaluationId}`
-    return `/api/results/${id}/image?${q}`
+    return `/api${mediaBase(id)}/image?${q}`
   },
+  lqSets: () => fb(() => request<LqSet[]>('GET', '/lq-sets'), () => mockResults.lqSets()),
   evaluators: () => fb(() => request<Evaluator[]>('GET', '/evaluators'), () => mockResults.evaluators()),
   evaluations: (resultSetId?: number) =>
     fb(() => request<Evaluation[]>('GET', '/evaluations', { query: { result_set_id: resultSetId } }), () => mockResults.evaluations(resultSetId)),
