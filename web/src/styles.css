@@ -119,7 +119,7 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .stepper span { min-width: 28px; text-align: center; font-family: var(--mono); }
 .thumb { aspect-ratio: 4 / 3; border-radius: 6px; overflow: hidden; background: var(--track); position: relative; display: block; width: 100%; object-fit: cover; }
 
-/* 侧栏折叠：对比页默认只显示图标，悬停或键盘聚焦时浮层展开，不挤动内容 */
+/* 侧栏折叠：默认只显示图标，悬停或键盘聚焦时浮层展开，不挤动内容 */
 .app.compact { padding-left: 64px; }
 .app.compact .side { position: fixed; top: 0; left: 0; bottom: 0; z-index: 20; width: 64px; max-width: none; padding: 20px 12px; overflow: hidden; transition: width 160ms ease, box-shadow 160ms ease; }
 .app.compact .side:hover, .app.compact .side:focus-within { width: 200px; box-shadow: 8px 0 24px rgba(21, 24, 28, 0.12); }

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { NavLink, useLocation } from 'react-router-dom'
+import { NavLink } from 'react-router-dom'
 import { IconChart, IconGrid, IconImage, IconList, IconServer } from './Icons'
 import { jobsApi } from '../api/jobs'
 import { useMock, usePoll } from '../lib/hooks'
@@ -15,10 +15,9 @@ const LINKS = [
 export default function Layout({ children }: { children: ReactNode }) {
   const sched = usePoll(() => jobsApi.scheduler(), [], 30_000)
   const schedMock = useMock('scheduler')
-  // 对比页需要横向空间，侧栏默认折叠成图标，悬停时展开
-  const compact = useLocation().pathname.startsWith('/compare')
+  // 侧栏默认折叠成图标，悬停时展开
   return (
-    <div className={compact ? 'app compact' : 'app'}>
+    <div className="app compact">
       <nav className="side" aria-label="主导航">
         <div className="brand">
           <div className="brand-mark" aria-hidden="true"><span /><span /><span /><span /></div>
