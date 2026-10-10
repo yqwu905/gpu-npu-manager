@@ -21,7 +21,7 @@
 | 结果集列表 / 登记 | `GET /api/results`、`POST /api/results` |
 | 结果集详情（样本浏览） | `GET /api/results/{id}`、`GET /api/results/{id}/samples`、`GET /api/results/{id}/file`、`GET /api/evaluations?result_set_id=` |
 | 发起评测 | `GET /api/evaluators`、`POST /api/evaluations` |
-| 对比（指标 / 图片对比） | `GET /api/compare/metrics`、`GET /api/compare/samples`；图片对比视图用 `GET /api/results/{id}/images`、`GET /api/results/{id}/image` |
+| 对比（指标 / 图片对比） | `GET /api/compare/metrics`、`GET /api/compare/samples`；图片对比视图用 `GET /api/results/{id}/images`、`GET /api/results/{id}/image`；LQ 数据集用 `GET /api/lq-sets`、`GET /api/lq-sets/{id}/images`、`GET /api/lq-sets/{id}/image` |
 | 任务详情与日志 | `GET /api/jobs/{id}`、`GET /api/jobs/{id}/log`、`POST /api/jobs/{id}/cancel`、`POST /api/jobs/{id}/requeue`、`PATCH /api/jobs/{id}`、`DELETE /api/jobs/{id}` |
 
 ## 接口列表
@@ -487,6 +487,16 @@
 - 响应带 `Server-Timing`，例如 `agent;dur=12.4, gen;dur=88.0;desc="agent", cache;desc="miss"`：`agent` 为等 Agent 的时间，`gen` 为生成耗时和生成方（`agent` / `central`），`cache` 为 `hit`（节点缓存命中）、`miss`（新生成）、`join`（与正在进行的同一请求共用结果）或 `l2`（中心服务缓存命中）。
 - 响应都带 `X-Content-Type-Options: nosniff`。错误为 JSON `{"detail": "中文说明"}`，503 都带 `Retry-After`（秒）。
 - 同一张图在各处生成的 URL 必须逐字节相同，浏览器缓存和前端的请求去重都依赖这一点：参数按 `path, v, kind, size, l, x, y, evaluation_id` 的顺序，缺省的不出现，预览的 `size` 先取档位。
+
+#### GET /api/lq-sets
+
+评测用过的 LQ 目录，可以作为一列加入图片对比（不参与指标对比）。按（评测服务器, LQ 目录）去重，`id` 为第一次用到它的评测 ID：
+
+```json
+[{"id": 12, "name": "LR", "lq_dir": "/data/ds/LR", "server_id": 3, "server_name": "gpu-01", "config_name": "DIV2K ×4"}]
+```
+
+`GET /api/lq-sets/{id}/images` 和 `GET /api/lq-sets/{id}/image` 的参数、响应和缓存规则与下面结果集的 `/images`、`/image` 相同，路径相对 LQ 目录，从评测服务器读取。前端用负数 ID（`-id`）把 LQ 数据集与结果集放在同一个 `ids` 里。
 
 #### GET /api/results/{id}/images
 

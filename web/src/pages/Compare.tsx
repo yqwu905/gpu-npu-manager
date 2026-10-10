@@ -34,8 +34,11 @@ function diffChars(pred: string, ref: string): { c: string; bad: boolean }[] {
 export default function ComparePage() {
   const [params, setParams] = useSearchParams()
   const idsParam = params.get('ids') ?? ''
-  const ids = useMemo(() => idsParam.split(',').map(Number).filter(Boolean), [idsParam])
+  // 负数为 LQ 数据集（-LQ 数据集 ID），只在图片对比里显示；指标对比只用结果集
+  const allIds = useMemo(() => idsParam.split(',').map(Number).filter(Boolean), [idsParam])
+  const ids = useMemo(() => allIds.filter((id) => id > 0), [allIds])
   const sets = usePoll(() => resultsApi.list(), [], 0)
+  const lqSets = usePoll(() => resultsApi.lqSets(), [], 0)
   const mock = useMock('results')
   const [baseIdx, setBaseIdx] = useState(0)
   const [sort, setSort] = useState<'spread' | 'worst' | 'none'>('spread')
@@ -71,8 +74,10 @@ export default function ComparePage() {
   }
   const candidates = sets.data ?? []
   // 传给图片对比的函数保持引用稳定，换图、缩放时不连带重渲染
-  const nameOf = useCallback((id: number) => m?.result_sets.find((r) => r.id === id)?.name ?? sets.data?.find((r) => r.id === id)?.name ?? `#${id}`, [m, sets.data])
-  const colorOf = useCallback((id: number) => COLORS[ids.indexOf(id) % COLORS.length], [ids])
+  const nameOf = useCallback((id: number) => id < 0
+    ? `LQ · ${lqSets.data?.find((r) => r.id === -id)?.name ?? `#${-id}`}`
+    : m?.result_sets.find((r) => r.id === id)?.name ?? sets.data?.find((r) => r.id === id)?.name ?? `#${id}`, [m, sets.data, lqSets.data])
+  const colorOf = useCallback((id: number) => COLORS[allIds.indexOf(id) % COLORS.length], [allIds])
   // 离开对比页：中止全部图片请求、释放解码缓存，缩略图只留 500 张；图片列表保留
   useEffect(() => () => { loader.abortAll(); bitmaps.clear(); thumbs.trim(500) }, [])
 
@@ -96,7 +101,7 @@ export default function ComparePage() {
   // 推理结果栏：已选的排在前面，再按关键字筛选
   const listed = [...candidates.filter((r) => ids.includes(r.id)), ...candidates.filter((r) => !ids.includes(r.id))]
     .filter((r) => !q.trim() || r.name.toLowerCase().includes(q.trim().toLowerCase()))
-  const toggleId = (id: number) => setIds(ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id])
+  const toggleId = (id: number) => setIds(allIds.includes(id) ? allIds.filter((x) => x !== id) : [...allIds, id])
 
   return (
     <main className="main cmp-main">
@@ -138,17 +143,34 @@ export default function ComparePage() {
                 </label>
               ))}
               {!listed.length && <div className="lbl" style={{ padding: 10 }}>{sets.loading ? '加载中' : '没有匹配的结果集'}</div>}
+              {!!lqSets.data?.length && (
+                <>
+                  <div className="lbl" style={{ padding: '10px 10px 4px' }}>LQ 数据集（仅图片对比）</div>
+                  {lqSets.data.map((r) => (
+                    <label key={`lq${r.id}`} className="cmp-set" style={allIds.includes(-r.id) ? { background: 'var(--bg)' } : undefined} title={r.lq_dir}>
+                      <input type="checkbox" checked={allIds.includes(-r.id)} onChange={() => toggleId(-r.id)} />
+                      <span className="col" style={{ gap: 3, minWidth: 0 }}>
+                        <span className="row" style={{ gap: 7 }}>
+                          <span className="dot" style={{ width: 10, height: 10, background: allIds.includes(-r.id) ? colorOf(-r.id) : 'var(--control)' }} />
+                          <span className="mono ellipsis" style={{ fontSize: 13, fontWeight: 500 }}>LQ · {r.name}</span>
+                        </span>
+                        <span className="lbl ellipsis">{r.server_name}{r.config_name ? ` · ${r.config_name}` : ''}</span>
+                      </span>
+                    </label>
+                  ))}
+                </>
+              )}
             </div>
             <div className="lbl" style={{ padding: '10px 16px', borderTop: '1px solid var(--border-soft)' }}><Link to="/results">去结果列表挑选</Link></div>
           </section>
           <button type="button" className={setsOpen ? 'cmp-rail off' : 'cmp-rail'} onClick={() => setSetsOpen(true)} aria-label="展开推理结果栏" aria-expanded="false">
             <span aria-hidden="true">›</span>
             <span className="cmp-rail-title">推理结果</span>
-            <span className="col" style={{ gap: 6 }}>{ids.map((id) => <span key={id} className="dot" style={{ width: 10, height: 10, background: colorOf(id) }} />)}</span>
+            <span className="col" style={{ gap: 6 }}>{allIds.map((id) => <span key={id} className="dot" style={{ width: 10, height: 10, background: colorOf(id) }} />)}</span>
           </button>
         </div>
 
-        {view === 'images' && <CompareImages ids={ids} nameOf={nameOf} colorOf={colorOf} />}
+        {view === 'images' && <CompareImages ids={allIds} nameOf={nameOf} colorOf={colorOf} />}
 
         {view === 'metrics' && (
       <div className="cmp-scroll">

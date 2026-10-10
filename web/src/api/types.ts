@@ -458,6 +458,16 @@ export type CompareSort = 'spread' | 'asc' | 'desc'
 /** GET /api/results/{id}/images 的一项：[路径, 字节数（-1 文件不存在，null 未知）, 版本号（'' 未知，URL 不能长期缓存）] */
 export type ImageEntry = [path: string, size: number | null, v: string]
 
+/** GET /api/lq-sets 的一项：评测用过的 LQ 目录，id 为第一次用到它的评测 ID */
+export interface LqSet {
+  id: number
+  name: string
+  lq_dir: string
+  server_id: number
+  server_name: string
+  config_name: string | null
+}
+
 /** 结果集的全部图片，后端已按 (文件名, 路径) 排序并按路径去重，前端不要再排序 */
 export interface ImageList {
   total: number

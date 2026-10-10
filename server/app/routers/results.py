@@ -30,6 +30,7 @@ from ..schemas import (
     EvaluationOut,
     EvaluatorOut,
     ImageList,
+    LqSetOut,
     MetricCompare,
     ResultSetCreate,
     ResultSetOut,
@@ -411,6 +412,89 @@ async def result_image(
     media = request.app.state.media
     params = media.params(kind, size, l, x, y)
     host, port, base = _media_target(request.app, result_id, evaluation_id)
+    return await media.image(request, host, port, base, _full_path(base, path), v, kind, params)
+
+
+# ----------------------------------------------------------------------------
+# LQ 数据集：评测用过的 LQ 目录，可以作为一列加入图片对比
+# ----------------------------------------------------------------------------
+
+
+@router.get("/lq-sets", response_model=list[LqSetOut], summary="评测用过的 LQ 数据集（图片对比用）")
+def list_lq_sets(session: Session = Depends(get_session)):
+    evaluations = session.scalars(
+        select(Evaluation)
+        .where(Evaluation.lq_dir.is_not(None), Evaluation.lq_dir != "")
+        .options(selectinload(Evaluation.result_set).selectinload(ResultSet.server))
+        .order_by(Evaluation.id)
+    ).all()
+    out: dict[tuple[int, str], LqSetOut] = {}
+    for evaluation in evaluations:
+        server = eval_server(evaluation)
+        key = (server.id, evaluation.lq_dir)
+        if key in out:
+            continue
+        out[key] = LqSetOut(
+            id=evaluation.id,
+            name=posixpath.basename(evaluation.lq_dir.rstrip("/")) or evaluation.lq_dir,
+            lq_dir=evaluation.lq_dir,
+            server_id=server.id,
+            server_name=server.name,
+            config_name=evaluation.config.name if evaluation.config else None,
+        )
+    return list(out.values())
+
+
+def _lq_target(app, evaluation_id: int) -> tuple[str, int, str]:
+    """LQ 数据集所在的 Agent 地址、端口和 LQ 目录，与 _media_target 共用缓存。"""
+    cache = app.state.media_targets
+    key = ("lq", evaluation_id)
+    cached = cache.get(key)
+    if cached is not None and time.monotonic() - cached[0] < MEDIA_TARGET_TTL:
+        return cached[1]
+    with app.state.session_factory() as session:
+        evaluation = session.get(Evaluation, evaluation_id)
+        if evaluation is None or not evaluation.lq_dir:
+            raise HTTPException(404, "LQ 数据集不存在", headers={"Cache-Control": "no-store", **NOSNIFF})
+        server = eval_server(evaluation)
+        target = server.host, server.port, evaluation.lq_dir
+    if len(cache) > 4096:
+        cache.clear()
+    cache[key] = (time.monotonic(), target)
+    return target
+
+
+@router.get(
+    "/lq-sets/{lq_id}/images",
+    response_model=ImageList,
+    summary="LQ 数据集的全部图片，同 /results/{id}/images",
+    responses={304: {"description": "If-None-Match 与 ETag 一致，列表没有变化"}},
+)
+async def lq_images(lq_id: int, request: Request):
+    host, port, base = _lq_target(request.app, lq_id)
+    return await request.app.state.media.image_list(request, host, port, base)
+
+
+@router.get(
+    "/lq-sets/{lq_id}/image",
+    response_class=Response,
+    summary="LQ 图片的缩略图、预览、无损原图或瓦片，同 /results/{id}/image",
+    responses={200: {"content": IMAGE_TYPES}, 304: {"description": "If-None-Match 与 ETag 一致"}},
+)
+async def lq_image(
+    lq_id: int,
+    request: Request,
+    path: str = Query(..., description="相对 LQ 目录的路径"),
+    v: str | None = VERSION_QUERY,
+    kind: Literal["thumb", "preview", "full", "tile"] = Query("thumb"),
+    size: int | None = Query(None, ge=1),
+    l: int | None = Query(None, ge=0),
+    x: int | None = Query(None, ge=0),
+    y: int | None = Query(None, ge=0),
+):
+    media = request.app.state.media
+    params = media.params(kind, size, l, x, y)
+    host, port, base = _lq_target(request.app, lq_id)
     return await media.image(request, host, port, base, _full_path(base, path), v, kind, params)
 
 

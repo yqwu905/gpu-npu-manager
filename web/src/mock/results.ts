@@ -1,6 +1,6 @@
 // 后端缺少推理结果与评测接口时使用的示例数据，内容与前端设计稿一致，结构与后端接口一致
 import type {
-  CompareMetrics, CompareSampleItem, CompareSamples, CompareSort, EvalConfig, EvalConfigBody, Evaluation, EvaluationCreate, Evaluator, ImageEntry, ImageList,
+  CompareMetrics, CompareSampleItem, CompareSamples, CompareSort, EvalConfig, EvalConfigBody, Evaluation, EvaluationCreate, Evaluator, ImageEntry, ImageList, LqSet,
   Project, ResultFilters, ResultSet, ResultSetCreate, ResultSetUpdate, Sample, SamplePage, TagCount,
 } from '../api/types'
 
@@ -186,6 +186,12 @@ export const mockResults = {
     const s = findSet(id)
     const ids = Array.from({ length: s.sample_count ?? 0 }, (_, i) => String(i).padStart(4, '0'))
     return { total: ids.length, offset, items: ids.slice(offset, offset + limit).map((sid, i) => sampleOf(s, sid, offset + i)) }
+  },
+  lqSets: (): LqSet[] => [{ id: 3, name: 'valid_LR_x4', lq_dir: '/data/datasets/DIV2K/valid_LR_x4', server_id: 4, server_name: 'gpu-l40s-01', config_name: 'DIV2K ×4 标准评测' }],
+  /** LQ 图片列表：与示例结果集同名（0000.png …），放在 LQ 目录下 */
+  lqImages(): ImageList {
+    const files: ImageEntry[] = Array.from({ length: 100 }, (_, i) => [`${String(i).padStart(4, '0')}.png`, null, ''])
+    return { total: files.length, missing: 0, skipped: 0, truncated: false, source: 'mock', files }
   },
   /** 图片列表：由示例样本编号生成，与后端一样按 (文件名, 路径) 排序；大小未知，所以放大时总走瓦片 */
   images(id: number): ImageList {
