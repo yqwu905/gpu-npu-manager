@@ -1,6 +1,11 @@
+// 不用参数属性，前端单测用 Node 的类型擦除直接运行，它不支持这种写法
 export class ApiError extends Error {
-  constructor(public status: number, public detail: string) {
+  status: number
+  detail: string
+  constructor(status: number, detail: string) {
     super(detail)
+    this.status = status
+    this.detail = detail
   }
 }
 
@@ -19,13 +24,17 @@ function buildQuery(query?: Query): string {
   return s ? `?${s}` : ''
 }
 
-export async function request<T>(method: string, path: string, opts: { query?: Query; body?: unknown } = {}): Promise<T> {
+interface Opts { query?: Query; body?: unknown; signal?: AbortSignal; headers?: Record<string, string> }
+
+async function send(method: string, path: string, opts: Opts): Promise<Response> {
   const resp = await fetch(`/api${path}${buildQuery(opts.query)}`, {
     method,
-    headers: opts.body === undefined ? undefined : { 'Content-Type': 'application/json' },
+    headers: opts.body === undefined ? opts.headers : { 'Content-Type': 'application/json', ...opts.headers },
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+    signal: opts.signal,
   })
-  if (!resp.ok) {
+  // 304 只在调用方自己带 If-None-Match 时出现，交给 requestFull 处理
+  if (!resp.ok && resp.status !== 304) {
     let detail = resp.statusText
     try {
       const data = await resp.json()
@@ -35,8 +44,20 @@ export async function request<T>(method: string, path: string, opts: { query?: Q
     }
     throw new ApiError(resp.status, detail)
   }
+  return resp
+}
+
+export async function request<T>(method: string, path: string, opts: { query?: Query; body?: unknown; signal?: AbortSignal } = {}): Promise<T> {
+  const resp = await send(method, path, opts)
   if (resp.status === 204) return undefined as T
   return resp.json() as Promise<T>
+}
+
+/** 同 request，另外返回响应头与状态码；204 和 304（带 If-None-Match 且未变化）时 data 为 null */
+export async function requestFull<T>(method: string, path: string, opts: Opts = {}): Promise<{ data: T | null; headers: Headers; status: number }> {
+  const resp = await send(method, path, opts)
+  const data = resp.status === 204 || resp.status === 304 ? null : ((await resp.json()) as T)
+  return { data, headers: resp.headers, status: resp.status }
 }
 
 // 任务、结果等接口在后端第 2、3 步上线前不存在，FastAPI 对未注册路由返回 404 "Not Found"。

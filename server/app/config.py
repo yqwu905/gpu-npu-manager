@@ -57,3 +57,21 @@ class Settings:
     enable_poller: bool = field(
         default_factory=lambda: os.environ.get("GNM_ENABLE_POLLER", "1") not in ("0", "false", "False")
     )
+    # 对比页图片：派生图缓存（L2）与原图暂存目录、容量（MB）
+    image_cache_dir: str = field(default_factory=lambda: os.environ.get("GNM_IMAGE_CACHE_DIR", "./data/image-cache"))
+    image_cache_mb: int = field(default_factory=lambda: _env_int("GNM_IMAGE_CACHE_MB", 4096))
+    image_spool_mb: int = field(default_factory=lambda: _env_int("GNM_IMAGE_SPOOL_MB", 4096))
+    # 读取图片、图片列表的超时（秒）
+    image_timeout: float = field(default_factory=lambda: float(os.environ.get("GNM_IMAGE_TIMEOUT", "60")))
+    image_list_timeout: float = field(default_factory=lambda: float(os.environ.get("GNM_IMAGE_LIST_TIMEOUT", "120")))
+    # 每个 Agent 同时进行的图片请求数：列表、缩略图、预览和瓦片、原图和文件流；排队超过 image_queue_wait 秒返回 503
+    image_list_concurrency: int = field(default_factory=lambda: _env_int("GNM_IMAGE_LIST_CONCURRENCY", 2))
+    image_thumb_concurrency: int = field(default_factory=lambda: _env_int("GNM_IMAGE_THUMB_CONCURRENCY", 6))
+    image_main_concurrency: int = field(default_factory=lambda: _env_int("GNM_IMAGE_MAIN_CONCURRENCY", 6))
+    image_stream_concurrency: int = field(default_factory=lambda: _env_int("GNM_IMAGE_STREAM_CONCURRENCY", 4))
+    image_queue_wait: float = field(default_factory=lambda: float(os.environ.get("GNM_IMAGE_QUEUE_WAIT", "20")))
+    # Agent 没有 Pillow 时由中心服务生成：线程数、解码内存预算、已解码整图的缓存（MB）、像素上限
+    image_workers: int = field(default_factory=lambda: _env_int("GNM_IMAGE_WORKERS", min(4, os.cpu_count() or 1)))
+    image_mem_mb: int = field(default_factory=lambda: _env_int("GNM_IMAGE_MEM_MB", 1024))
+    image_decoded_mb: int = field(default_factory=lambda: _env_int("GNM_IMAGE_DECODED_MB", 2048))
+    image_max_pixels: int = field(default_factory=lambda: int(float(os.environ.get("GNM_IMAGE_MAX_PIXELS", "3e8"))))

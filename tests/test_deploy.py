@@ -15,7 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
-from app.deployer import package_version
+from app.deployer import install_script, package_version
 from app.evaluations import build_command
 from app.main import create_app
 from app.models import Evaluation, ResultSet
@@ -94,6 +94,9 @@ def test_install_and_upgrade(tmp_path, monkeypatch):
             assert not server["agent_outdated"] and server["managed"]
             env = (home / ".gnm-agent" / "bin" / "agent.env").read_text()
             assert "GNM_AGENT_TOKEN=secret" in env and "GNM_AGENT_ALLOW_ROOTS" not in env
+            bin_dir = home / ".gnm-agent" / "bin"
+            assert (bin_dir / "imaging.py").read_bytes() == (ROOT / "agent" / "imaging.py").read_bytes()
+            assert '"${GNM_AGENT_PYTHON:-' in (bin_dir / "run.sh").read_text()
             # 默认经 SSH 转发访问，Agent 只监听本机
             assert "GNM_AGENT_HOST=127.0.0.1" in env and server["ssh_tunnel"]
             assert f"-N -o ExitOnForwardFailure=yes" in (tmp_path / "ssh.log").read_text()
@@ -116,6 +119,19 @@ def test_install_and_upgrade(tmp_path, monkeypatch):
             assert client.post(f"/api/servers/{body['created'][1]['id']}/deploy").status_code == 409
     finally:
         stop_agent(home)
+
+
+def test_install_script_contents():
+    import agent
+
+    script = install_script(str(ROOT / "agent"), {"GNM_AGENT_TOKEN": "t"})
+    for name in ("agent.py", "evaluate.py", "imaging.py"):
+        assert f'mv "$B/{name}.new" "$B/{name}"' in script
+    # 运行时（读取 agent.local.env 之后）才展开 GNM_AGENT_PYTHON
+    assert '"\\${GNM_AGENT_PYTHON:-$PY}" "$B/agent.py"' in script
+    assert 'import PIL' in script and "export GNM_AGENT_PYTHON=/path/to/python3" in script
+    assert package_version(str(ROOT / "agent")) == agent.build_version(str(ROOT / "agent"))
+    assert "imaging.py" in (ROOT / "agent" / "install.sh").read_text()
 
 
 def test_deploy_failures(tmp_path):

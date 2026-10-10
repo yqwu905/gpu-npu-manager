@@ -11,6 +11,7 @@ DIR=$(cd "$(dirname "$0")" && pwd)
 install -d /opt/gnm-agent
 install -m 0755 "$DIR/agent.py" /opt/gnm-agent/agent.py
 install -m 0755 "$DIR/evaluate.py" /opt/gnm-agent/evaluate.py
+install -m 0644 "$DIR/imaging.py" /opt/gnm-agent/imaging.py
 umask 077
 printf 'GNM_AGENT_TOKEN=%s\nGNM_AGENT_PORT=%s\n' "$TOKEN" "$PORT" > /etc/gnm-agent.env
 if [ -n "$ALLOW_ROOTS" ]; then

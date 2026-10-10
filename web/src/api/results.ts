@@ -1,11 +1,14 @@
-import { request, withFallback } from './client'
-import { mockResults } from '../mock/results'
+// 带 .ts 后缀：对比页的纯模块会经由本文件被 node --test 直接加载
+import { request, requestFull, withFallback } from './client.ts'
+import { mockResults } from '../mock/results.ts'
 import type {
-  CompareMetrics, CompareSamples, CompareSort, EvalConfig, EvalConfigBody, Evaluation, EvaluationCreate, Evaluator, Project, ResultFilters,
-  ResultSet, ResultSetCreate, ResultSetUpdate, Sample, SamplePage, TagCount,
+  CompareMetrics, CompareSamples, CompareSort, EvalConfig, EvalConfigBody, Evaluation, EvaluationCreate, Evaluator, ImageKind, ImageList, Project,
+  ResultFilters, ResultSet, ResultSetCreate, ResultSetUpdate, Sample, SamplePage, TagCount,
 } from './types'
 
 const fb = <T>(real: () => Promise<T>, mock: () => T | Promise<T>) => withFallback('results', real, mock)
+// 预览尺寸向上取到后端的档位，保证同一张图的 URL 一致
+const previewBucket = (s: number) => (s <= 1024 ? 1024 : s <= 2048 ? 2048 : 3072)
 
 export const resultsApi = {
   list: (filters: ResultFilters = {}) =>
@@ -33,6 +36,31 @@ export const resultsApi = {
   /** 样本里的图片字段；评测补上的 lq_image / ref_image 在评测服务器上，按 media 带上评测 ID */
   sampleFileUrl: (id: number, sample: Sample, field: 'image' | 'ref_image' | 'lq_image') =>
     resultsApi.fileUrl(id, String(sample[field]), sample.media?.[field]),
+  /**
+   * 结果集的全部图片列表（gzip，带 ETag）。传入上次的 etag 时带 If-None-Match，未变化返回 list 为 null；
+   * 示例数据模式下 etag 固定为 'mock'
+   */
+  images: (id: number, opts: { signal?: AbortSignal; etag?: string } = {}) =>
+    fb(
+      async () => {
+        const r = await requestFull<ImageList>('GET', `/results/${id}/images`, { signal: opts.signal, headers: opts.etag ? { 'If-None-Match': opts.etag } : undefined })
+        return { list: r.data, etag: r.headers.get('ETag') ?? (r.status === 304 ? opts.etag ?? '' : '') }
+      },
+      () => ({ list: opts.etag === 'mock' ? null : mockResults.images(id), etag: 'mock' }),
+    ),
+  /**
+   * 图片的缩略图 / 预览 / 原图 / 瓦片。参数顺序固定为 path, v, kind, size, l, x, y, evaluation_id，缺省的不出现；
+   * 同一张图在各处生成的 URL 逐字节相同，浏览器缓存和请求去重都依赖这一点。v 为空时不带（不能长期缓存）
+   */
+  imageUrl: (id: number, path: string, v: string, kind: ImageKind, o: { size?: number; l?: number; x?: number; y?: number; evaluationId?: number } = {}) => {
+    let q = `path=${encodeURIComponent(path)}`
+    if (v) q += `&v=${encodeURIComponent(v)}`
+    q += `&kind=${kind}`
+    if (kind === 'preview') q += `&size=${previewBucket(o.size ?? 2048)}`
+    if (kind === 'tile') q += `&l=${o.l ?? 0}&x=${o.x ?? 0}&y=${o.y ?? 0}`
+    if (o.evaluationId) q += `&evaluation_id=${o.evaluationId}`
+    return `/api/results/${id}/image?${q}`
+  },
   evaluators: () => fb(() => request<Evaluator[]>('GET', '/evaluators'), () => mockResults.evaluators()),
   evaluations: (resultSetId?: number) =>
     fb(() => request<Evaluation[]>('GET', '/evaluations', { query: { result_set_id: resultSetId } }), () => mockResults.evaluations(resultSetId)),

@@ -1,6 +1,6 @@
 """通过 SSH 在服务器上安装和升级 Agent。
 
-中心服务用本机的 ssh 命令（密钥免密登录）连到服务器，把 agent.py、evaluate.py 写到登录用户的
+中心服务用本机的 ssh 命令（密钥免密登录）连到服务器，把 agent.py、evaluate.py、imaging.py 写到登录用户的
 ~/.gnm-agent/bin/，生成配置和守护脚本后启动。不需要 root：Agent 以登录用户运行，用 crontab 的
 @reboot 实现开机自启。升级时重启 Agent 进程，任务进程在独立的会话中运行，不受影响。
 """
@@ -25,7 +25,7 @@ from .tunnels import ssh_args
 
 log = logging.getLogger(__name__)
 
-PACKAGE_FILES = ("agent.py", "evaluate.py")
+PACKAGE_FILES = ("agent.py", "evaluate.py", "imaging.py")
 MAX_LOG = 20000
 # 安装后等待 Agent 响应的时间（秒）
 HEALTH_WAIT = 20
@@ -92,7 +92,8 @@ def install_script(package_dir: str, env: dict[str, str]) -> str:
         # 本机自定义配置（如 GNM_NPU_SMI），升级时不会覆盖
         'if [ -f "$D/agent.local.env" ]; then . "$D/agent.local.env"; fi',
         "while true; do",
-        '    "$PY" "$B/agent.py"',
+        # agent.local.env 里可以用 GNM_AGENT_PYTHON 指定装了 Pillow 的 python3
+        '    "\\${GNM_AGENT_PYTHON:-$PY}" "$B/agent.py"',
         "    sleep 5",
         "done",
         "GNM_EOF",
@@ -129,6 +130,9 @@ def install_script(package_dir: str, env: dict[str, str]) -> str:
         '    echo "警告：没有 crontab，服务器重启后需要在页面上重新安装 Agent"',
         "fi",
         'echo "Agent 已安装到 $B，进程 $(cat "$D/agent.pid")"',
+        '( if [ -f "$D/agent.local.env" ]; then . "$D/agent.local.env"; fi; "${GNM_AGENT_PYTHON:-$PY}" -c "import PIL" ) '
+        '2>/dev/null || echo "提示：python3 没有 Pillow，缩略图将由中心服务生成（需传输原图，较慢）；'
+        '可在 ~/.gnm-agent/agent.local.env 写 export GNM_AGENT_PYTHON=/path/to/python3"',
     ]
     return "\n".join(lines) + "\n"
 

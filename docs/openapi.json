@@ -1962,7 +1962,7 @@
         "tags": [
           "results"
         ],
-        "summary": "读取结果集中的文件（如图片）",
+        "summary": "读取结果集中的文件（如图片），流式转发",
         "operationId": "result_file_api_results__result_id__file_get",
         "parameters": [
           {
@@ -1984,6 +1984,25 @@
               "title": "Path"
             },
             "description": "相对结果集目录的路径，或服务器上的绝对路径"
+          },
+          {
+            "name": "v",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{10}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "版本号（/images 返回）；与文件当前版本一致时浏览器可永久缓存",
+              "title": "V"
+            },
+            "description": "版本号（/images 返回）；与文件当前版本一致时浏览器可永久缓存"
           },
           {
             "name": "evaluation_id",
@@ -2012,6 +2031,238 @@
                 "schema": {}
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/results/{result_id}/images": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "结果集的全部图片（对比页），gzip，带 ETag",
+        "operationId": "result_images_api_results__result_id__images_get",
+        "parameters": [
+          {
+            "name": "result_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Result Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageList"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "If-None-Match 与 ETag 一致，列表没有变化"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/results/{result_id}/image": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "图片的缩略图、预览、无损原图或瓦片",
+        "operationId": "result_image_api_results__result_id__image_get",
+        "parameters": [
+          {
+            "name": "result_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Result Id"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "相对结果集目录的路径，或服务器上的绝对路径",
+              "title": "Path"
+            },
+            "description": "相对结果集目录的路径，或服务器上的绝对路径"
+          },
+          {
+            "name": "v",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{10}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "版本号（/images 返回）；与文件当前版本一致时浏览器可永久缓存",
+              "title": "V"
+            },
+            "description": "版本号（/images 返回）；与文件当前版本一致时浏览器可永久缓存"
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "thumb",
+                "preview",
+                "full",
+                "tile"
+              ],
+              "type": "string",
+              "description": "thumb：长边 256 的缩略图；preview：长边不超过 size 的预览；full：原分辨率无损；tile：512² 瓦片",
+              "default": "thumb",
+              "title": "Kind"
+            },
+            "description": "thumb：长边 256 的缩略图；preview：长边不超过 size 的预览；full：原分辨率无损；tile：512² 瓦片"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "预览的长边，向上取到 1024 / 2048 / 3072，缺省 2048",
+              "title": "Size"
+            },
+            "description": "预览的长边，向上取到 1024 / 2048 / 3072，缺省 2048"
+          },
+          {
+            "name": "l",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "瓦片层级，第 l 层为原图缩小 2^l 倍",
+              "title": "L"
+            },
+            "description": "瓦片层级，第 l 层为原图缩小 2^l 倍"
+          },
+          {
+            "name": "x",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "瓦片列号",
+              "title": "X"
+            },
+            "description": "瓦片列号"
+          },
+          {
+            "name": "y",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "瓦片行号",
+              "title": "Y"
+            },
+            "description": "瓦片行号"
+          },
+          {
+            "name": "evaluation_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "从该评测的评测服务器读取（样本的 media 字段给出）",
+              "title": "Evaluation Id"
+            },
+            "description": "从该评测的评测服务器读取（样本的 media 字段给出）"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "图片；响应头 X-Image-Width / X-Image-Height 为原图（按 EXIF 方向转正后）的尺寸",
+            "content": {
+              "image/jpeg": {},
+              "image/webp": {},
+              "image/png": {},
+              "image/gif": {},
+              "image/bmp": {}
+            }
+          },
+          "304": {
+            "description": "If-None-Match 与 ETag 一致"
           },
           "422": {
             "description": "Validation Error",
@@ -4379,6 +4630,78 @@
         },
         "type": "object",
         "title": "HostInfo"
+      },
+      "ImageList": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "files 的条数"
+          },
+          "missing": {
+            "type": "integer",
+            "title": "Missing",
+            "description": "不存在或不可读的文件数（size 为 -1）"
+          },
+          "skipped": {
+            "type": "integer",
+            "title": "Skipped",
+            "description": "没有字符串 image 字段的记录、不是合法 JSON 的行"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated",
+            "description": "超过 200000 条时截断"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "samples"
+            ],
+            "title": "Source",
+            "description": "agent：Agent 读取文件信息生成；samples：旧版 Agent，由样本拼出，没有大小和版本号"
+          },
+          "files": {
+            "items": {
+              "prefixItems": [
+                {
+                  "type": "string"
+                },
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                {
+                  "type": "string"
+                }
+              ],
+              "type": "array",
+              "maxItems": 3,
+              "minItems": 3
+            },
+            "type": "array",
+            "title": "Files",
+            "description": "[路径, 字节数, 版本号]，按 (文件名, 路径) 排序、去重，前端不要再排序。路径即样本的 image 字段；字节数 -1 为文件不存在，null 为未知；版本号为空表示未知，图片 URL 不带 v，不能长期缓存"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "missing",
+          "skipped",
+          "truncated",
+          "source",
+          "files"
+        ],
+        "title": "ImageList",
+        "description": "结果集的全部图片（对比页用），只用于接口文档：实际响应由 Agent 生成后原样转发（gzip）。"
       },
       "JobCreate": {
         "properties": {

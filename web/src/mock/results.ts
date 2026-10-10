@@ -1,7 +1,7 @@
 // 后端缺少推理结果与评测接口时使用的示例数据，内容与前端设计稿一致，结构与后端接口一致
 import type {
-  CompareMetrics, CompareSampleItem, CompareSamples, CompareSort, EvalConfig, EvalConfigBody, Evaluation, EvaluationCreate, Evaluator, Project,
-  ResultFilters, ResultSet, ResultSetCreate, ResultSetUpdate, Sample, SamplePage, TagCount,
+  CompareMetrics, CompareSampleItem, CompareSamples, CompareSort, EvalConfig, EvalConfigBody, Evaluation, EvaluationCreate, Evaluator, ImageEntry, ImageList,
+  Project, ResultFilters, ResultSet, ResultSetCreate, ResultSetUpdate, Sample, SamplePage, TagCount,
 } from '../api/types'
 
 const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString()
@@ -186,6 +186,14 @@ export const mockResults = {
     const s = findSet(id)
     const ids = Array.from({ length: s.sample_count ?? 0 }, (_, i) => String(i).padStart(4, '0'))
     return { total: ids.length, offset, items: ids.slice(offset, offset + limit).map((sid, i) => sampleOf(s, sid, offset + i)) }
+  },
+  /** 图片列表：由示例样本编号生成，与后端一样按 (文件名, 路径) 排序；大小未知，所以放大时总走瓦片 */
+  images(id: number): ImageList {
+    const s = findSet(id)
+    const base = (p: string) => p.slice(Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')) + 1)
+    const files: ImageEntry[] = Array.from({ length: s.sample_count ?? 0 }, (_, i) => [`images/${String(i).padStart(4, '0')}.png`, null, ''])
+    files.sort((a, b) => (base(a[0]) < base(b[0]) ? -1 : base(a[0]) > base(b[0]) ? 1 : a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+    return { total: files.length, missing: 0, skipped: 0, truncated: false, source: 'mock', files }
   },
   evaluators: () => EVALUATORS,
   evaluations: (resultSetId?: number) => evaluations.filter((e) => resultSetId === undefined || e.result_set_id === resultSetId),

@@ -182,8 +182,18 @@ def _new_server(body: ServerCreate) -> Server:
     return server
 
 
+def _servers_changed(request: Request) -> None:
+    """服务器增删改后：重新读取 SSH 转发目标，清掉读取文件和图片时缓存的目标与 Agent 能力。"""
+    agent = request.app.state.scheduler.agent
+    if agent.tunnels is not None:
+        agent.tunnels.invalidate()
+    agent.forget()
+    request.app.state.media_targets.clear()
+
+
 # 会创建后台部署任务，必须在事件循环中调用，所以调用它的接口都定义为 async
 def _after_create(request: Request, background: BackgroundTasks, servers: list[Server], deploy: bool) -> None:
+    _servers_changed(request)
     to_deploy = [s.id for s in servers if deploy and s.ssh_user]
     if to_deploy:
         request.app.state.deployer.submit(to_deploy)
@@ -314,6 +324,7 @@ def get_server(server_id: int, session: Session = Depends(get_session), settings
 def update_server(
     server_id: int,
     body: ServerUpdate,
+    request: Request,
     session: Session = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ):
@@ -325,11 +336,12 @@ def update_server(
             value = (value or "").strip() or None
         setattr(server, field, value)
     _commit(session)
+    _servers_changed(request)
     return server_out(server, settings, occupied=occupied_devices(session))
 
 
 @router.delete("/servers/{server_id}", status_code=204, summary="删除服务器")
-def delete_server(server_id: int, session: Session = Depends(get_session)):
+def delete_server(server_id: int, request: Request, session: Session = Depends(get_session)):
     server = _get_server(session, server_id)
     active = session.scalar(
         select(func.count()).where(Job.assigned_server_id == server_id, Job.status.in_(JOB_ACTIVE_STATUSES))
@@ -341,6 +353,7 @@ def delete_server(server_id: int, session: Session = Depends(get_session)):
     session.query(EvalConfig).filter(EvalConfig.server_id == server_id).update({"server_id": None})
     session.delete(server)
     session.commit()
+    _servers_changed(request)
     return Response(status_code=204)
 
 

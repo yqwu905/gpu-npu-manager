@@ -15,6 +15,7 @@ import shlex
 import shutil
 import socket
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
 
@@ -31,6 +32,8 @@ READY_TIMEOUT = 15
 RETRY_AFTER = 10
 # 中继模式下 SSH 主连接空闲多久后退出（秒）
 CONTROL_PERSIST = 60
+# 遇到不在转发列表里的服务器时，距上次读取数据库超过这么久（秒）才重新读取
+REFRESH_INTERVAL = 5
 
 # 在服务器上运行：连接本机 Agent 端口，与标准输入输出互相转发
 RELAY_SCRIPT = """\
@@ -123,26 +126,38 @@ class Tunnels:
         self._targets: dict[tuple[str, int], Target] = {}
         self._tunnels: dict[tuple[str, int], Tunnel] = {}
         self._control_dir: str | None = None
+        self._refreshed = 0.0
+        self._stale = True
+        # 失效后并发的请求可能同时触发 refresh（在线程中执行），串行执行
+        self._refresh_lock = threading.Lock()
+
+    def invalidate(self) -> None:
+        """服务器增删改后调用：下次访问时重新读取数据库。"""
+        self._stale = True
 
     def refresh(self) -> None:
         """从数据库读取需要转发的服务器；配置变化或删除的服务器关闭旧的转发。"""
-        with self.session_factory() as session:
-            rows = session.execute(
-                select(Server.host, Server.port, Server.ssh_user, Server.ssh_host, Server.ssh_port).where(
-                    Server.ssh_user.is_not(None), Server.ssh_tunnel.is_not(False)
-                )
-            ).all()
-        self._targets = {
-            (r.host, r.port): Target(r.ssh_user, r.ssh_host or r.host, r.ssh_port or 22, r.port) for r in rows
-        }
-        for key, tunnel in list(self._tunnels.items()):
-            if self._targets.get(key) != tunnel.target:
-                self._close(self._tunnels.pop(key))
+        with self._refresh_lock:
+            self._stale = False
+            self._refreshed = time.monotonic()
+            with self.session_factory() as session:
+                rows = session.execute(
+                    select(Server.host, Server.port, Server.ssh_user, Server.ssh_host, Server.ssh_port).where(
+                        Server.ssh_user.is_not(None), Server.ssh_tunnel.is_not(False)
+                    )
+                ).all()
+            self._targets = {
+                (r.host, r.port): Target(r.ssh_user, r.ssh_host or r.host, r.ssh_port or 22, r.port) for r in rows
+            }
+            for key, tunnel in list(self._tunnels.items()):
+                if self._targets.get(key) != tunnel.target and self._tunnels.get(key) is tunnel:
+                    self._close(self._tunnels.pop(key))
 
     async def endpoint(self, host: str, port: int) -> tuple[str, int]:
         """返回实际要连接的地址：开启转发的服务器是本地端口，其余原样返回。"""
         key = (host, port)
-        if key not in self._targets:
+        # 不需要转发的服务器每次都不在列表里，限制读取数据库的频率；增删改服务器时由 invalidate 触发重新读取
+        if self._stale or (key not in self._targets and time.monotonic() - self._refreshed > REFRESH_INTERVAL):
             await asyncio.to_thread(self.refresh)
         target = self._targets.get(key)
         if target is None:

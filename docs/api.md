@@ -21,7 +21,7 @@
 | 结果集列表 / 登记 | `GET /api/results`、`POST /api/results` |
 | 结果集详情（样本浏览） | `GET /api/results/{id}`、`GET /api/results/{id}/samples`、`GET /api/results/{id}/file`、`GET /api/evaluations?result_set_id=` |
 | 发起评测 | `GET /api/evaluators`、`POST /api/evaluations` |
-| 指标对比 | `GET /api/compare/metrics`、`GET /api/compare/samples` |
+| 对比（指标 / 图片对比） | `GET /api/compare/metrics`、`GET /api/compare/samples`；图片对比视图用 `GET /api/results/{id}/images`、`GET /api/results/{id}/image` |
 | 任务详情与日志 | `GET /api/jobs/{id}`、`GET /api/jobs/{id}/log`、`POST /api/jobs/{id}/cancel`、`POST /api/jobs/{id}/requeue`、`PATCH /api/jobs/{id}`、`DELETE /api/jobs/{id}` |
 
 ## 接口列表
@@ -380,7 +380,13 @@
 
 ### GET /api/results/{id}/file?path=images/0001.png
 
-读取结果集里的文件（主要是图片），直接返回文件内容和对应的 Content-Type，可以作为 `<img src>` 使用。`path` 可以是相对结果集目录的路径，也可以是服务器上的绝对路径（如参考图）。加 `evaluation_id` 时从该评测的评测服务器读取（相对路径相对于拷贝过去的结果目录）。
+读取结果集里的文件（主要是图片），返回文件内容和对应的 Content-Type，可以作为 `<img src>` 使用。`path` 可以是相对结果集目录的路径，也可以是服务器上的绝对路径（如参考图）。加 `evaluation_id` 时从该评测的评测服务器读取（相对路径相对于拷贝过去的结果目录）。
+
+- 内容由 Agent 流式发送，中心服务原样转发，不在内存中缓冲，不限文件大小。
+- 透传 `Content-Length`、`ETag`（`"<版本号>"`）和 `Last-Modified`；请求带 `If-None-Match` 时交给 Agent 判断，文件没变返回 304。
+- 可选参数 `v`：`/images` 给出的版本号，缓存规则见下文“对比页的图片接口”。不带 `v` 时为 `Cache-Control: private, max-age=300`。
+- 响应都带 `X-Content-Type-Options: nosniff` 和 `Content-Security-Policy: sandbox`（不影响作为图片显示）；`text/html` 和 `image/svg+xml` 另加 `Content-Disposition: attachment`，只能下载，不在页面里打开。
+- 文件不存在、不在 Agent 允许读取的目录内或评测不属于该结果集时返回 404；Agent 连不上返回 502，超时 504；对该 Agent 的文件流排队超过 20 秒返回 503（带 `Retry-After`）。
 
 ### POST /api/evaluations
 
@@ -457,6 +463,93 @@
 - 某结果集没有该样本时，对应值为 `null`。
 - 图片用 `/api/results/{结果集 ID}/file?path=<image 字段>` 读取。
 - 单个结果集超过 50000 个样本时返回 422。
+
+### 对比页的图片接口
+
+对比页的图片对比视图先用 `/images` 一次取到结果集的全部图片，再用 `/image` 按需取缩略图、预览、无损原图和瓦片，不再分页读取 `/samples`，也不再用原图做缩略图。派生图由节点 Agent 用 Pillow 生成，缓存在节点磁盘上；节点没有 Pillow 或 Agent 是旧版本时，中心服务把原图拉到本地暂存，用同一份 `agent/imaging.py` 生成，结果逐字节相同，只是多传一次原图，慢一些。
+
+#### 版本号与缓存
+
+- **版本号 `v`**：`sha1("<修改时间 ns>:<字节数>")` 的前 10 位十六进制，由 Agent 计算，出现在 `/images` 的列表和文件、图片响应的 `X-Source-Version` 里。为空表示未知（旧版 Agent），URL 不带 `v`。
+- **ETag**（强校验）：原图和原样返回的 `full` 为 `"<v>"`；派生图为 `"<v>.<代号>.<GEN>"`，代号为 `t256`（缩略图）、`p2048`（预览，数字为档位）、`f`（转码的原图）或 `l2x3y1`（瓦片），`GEN` 是生成算法的版本，目前为 1；图片列表为未压缩 JSON 的 sha1 前 16 位。
+- **Cache-Control**：
+
+| 情况 | Cache-Control |
+| --- | --- |
+| URL 带 `v`，与文件当前版本一致 | `private, max-age=31536000, immutable` |
+| URL 带 `v`，但文件已改写 | `private, no-cache`，ETag 为实际版本的 |
+| URL 不带 `v` | `private, max-age=300` |
+| `/images` | `private, no-cache`，带 ETag 和 `Vary: Accept-Encoding` |
+| 出错 | `no-store` |
+
+- URL 带 `v` 且 `If-None-Match` 与由 (v, kind, 参数) 算出的 ETag 一致时，中心服务直接返回 304，不访问 Agent。
+- URL 带 `v` 时，Agent 生成的派生图（16 MB 以内，`full` 除外）在中心服务磁盘上再存一份（L2，见 README 的 `GNM_IMAGE_CACHE_DIR`），之后同一版本不再访问 Agent。只有 Agent 返回的 `X-Source-Version` 等于 `v` 时才写入。
+- 响应带 `Server-Timing`，例如 `agent;dur=12.4, gen;dur=88.0;desc="agent", cache;desc="miss"`：`agent` 为等 Agent 的时间，`gen` 为生成耗时和生成方（`agent` / `central`），`cache` 为 `hit`（节点缓存命中）、`miss`（新生成）、`join`（与正在进行的同一请求共用结果）或 `l2`（中心服务缓存命中）。
+- 响应都带 `X-Content-Type-Options: nosniff`。错误为 JSON `{"detail": "中文说明"}`，503 都带 `Retry-After`（秒）。
+- 同一张图在各处生成的 URL 必须逐字节相同，浏览器缓存和前端的请求去重都依赖这一点：参数按 `path, v, kind, size, l, x, y, evaluation_id` 的顺序，缺省的不出现，预览的 `size` 先取档位。
+
+#### GET /api/results/{id}/images
+
+结果集的全部图片。没有查询参数，浏览器会自动带上 `Accept-Encoding` 和 `If-None-Match`。
+
+```json
+{"total": 20000, "missing": 3, "skipped": 0, "truncated": false, "source": "agent",
+ "files": [["images/00001.png", 25165824, "9f2c01ab3e"], ["images/00002.png", -1, ""]]}
+```
+
+- `files` 每项为 `[路径, 字节数, 版本号]`。路径就是样本的 `image` 字段（相对结果集目录或绝对路径）；字节数 -1 表示文件不存在、不可读或不在 Agent 允许读取的目录内，`null` 表示未知；版本号为空表示未知。
+- 路径取自 `predictions.jsonl` 每条记录的 `image` 字段，没有 jsonl 时扫描目录（规则同 `/samples`）。按路径去重（保留第一次出现的），按 (文件名, 完整路径) 排序，文件名为最后一个 `/` 或 `\` 之后的部分，按 Unicode 码点比较。前端不要再排序。
+- `total` 为 `files` 的条数，最多 200000（排序后截断，`truncated` 为 true）；`missing` 为字节数 -1 的条数；`skipped` 为没有字符串 `image` 字段的记录和不是合法 JSON 的行。
+- `source`：`agent` 为 Agent 读取文件信息生成；`samples` 为旧版 Agent 的兼容模式，中心服务分页读取样本拼出列表并缓存 30 秒，字节数都是 `null`，版本号都为空。
+- 请求接受 gzip 时返回 `Content-Encoding: gzip`（2 万张约 50 KB）。`If-None-Match` 与 ETag 一致时返回 304。
+- Agent 按 `predictions.jsonl` 的大小和修改时间缓存列表 30 秒（最多 16 个目录），所以图片文件改写后，列表里的版本号最多 30 秒后才更新。
+- 结果集不存在返回 404；目录不存在或不在 Agent 允许读取的目录内返回 422（`读取图片列表失败：…`）；Agent 连不上 502，超时（默认 120 秒）504，排队超过 20 秒 503。
+
+#### GET /api/results/{id}/image
+
+| 参数 | 说明 |
+| --- | --- |
+| `path` | 必填，与 `/file` 相同：相对结果集目录的路径或绝对路径 |
+| `v` | 可选，`/images` 给出的 10 位版本号 |
+| `kind` | `thumb`（默认）/ `preview` / `full` / `tile` |
+| `size` | 只用于预览：长边向上取到 1024 / 2048 / 3072，超过 3072 按 3072，默认 2048 |
+| `l`、`x`、`y` | 瓦片必填：层级、列号、行号，均 ≥ 0 |
+| `evaluation_id` | 可选，与 `/file` 相同 |
+
+- **thumb**：长边不超过 256，不放大。不透明的图为 JPEG（质量 80，4:2:0），有透明度的为 WebP（质量 80；节点的 Pillow 不支持 WebP 时为 PNG）。
+- **preview**：长边不超过 `size`。不透明的图为 JPEG（质量 90，4:4:4，保留 ICC 色彩配置），有透明度的为 WebP 或 PNG。原图长边不超过 `size` 时预览就是无损的：原图是浏览器能直接显示的格式且不超过 8 MB 时直接返回原图，否则编码为无损 WebP 或 PNG。
+- **full**：原分辨率无损。浏览器能直接显示的原图（PNG、JPEG、GIF、WebP，以及不超过 8 MB 的 BMP）原样流式转发，不需要 Pillow；其他格式（TIFF、大 BMP 等）转码一次为 8 位无损 WebP（边长超过 16383 或没有 WebP 时为 PNG）并缓存。
+- **tile**：无损瓦片金字塔。第 0 层为 8 位显示图像，第 l 层为第 0 层 `reduce(2^l)`（盒式滤波）的结果，尺寸 `ceil(W / 2^l) × ceil(H / 2^l)`。瓦片 512×512，(x, y) 覆盖 `[512x, min(Wl, 512x+512)) × [512y, min(Hl, 512y+512))`，边缘的更小。`l` 的范围是 0 到 `max(0, ceil(log2(max(W, H) / 512)))`，层级或坐标超出范围返回 400。编码为无损 WebP（没有 WebP 时为 PNG），第 0 层与显示图像逐像素相同。
+- **显示图像**：只取第一帧，按 EXIF 方向转正，转为 RGB、RGBA 或灰度：调色板、CMYK 等转 RGB（有透明度时 RGBA）；16 位整数除以 257；32 位整数和浮点数据按值域换算（浮点不超过 1 时乘 255，不超过 255 不变，不超过 65535 除以 257），超过 65535 时按本图最大值缩放，响应带 `X-Normalized: 1`。
+
+响应头：
+
+| 响应头 | 说明 |
+| --- | --- |
+| `X-Image-Width` / `X-Image-Height` | 原图按 EXIF 方向转正后的尺寸（不是返回图片的尺寸）；thumb、preview、tile 都有，full 在已知时有 |
+| `X-Image-Format` | 按文件头判断的原图格式：`png` / `jpeg` / `gif` / `webp` / `bmp` / `tiff` / `other` |
+| `X-Image-Native` | `1` 表示浏览器能直接显示原图 |
+| `X-Lossless` | `1` 为无损（原图、无损预览、转码的原图、瓦片），`0` 为有损的缩略图和预览 |
+| `X-Normalized` | 只在按本图最大值缩放过时出现，值为 `1`，前端显示“已归一化” |
+| `X-Tile-Size` | 瓦片为 `512` |
+| `ETag`、`Cache-Control`、`Server-Timing` | 见“版本号与缓存” |
+
+状态码：400 瓦片超出范围；404 文件不存在、不在 Agent 允许读取的目录内，或评测不属于该结果集；413 像素数超过上限（默认 3 亿）；415 无法解码（只用 PNG、JPEG、GIF、WebP、BMP、TIFF、PPM、TGA、JPEG 2000 的解码器，不会调用 Ghostscript 等外部程序）；422 参数不合法，例如瓦片缺少 `l`、`x`、`y`，`v` 不是 10 位十六进制；501 节点和中心服务都无法生成（中心服务没有 Pillow），前端改为加载原图；502 Agent 出错或连不上；503 繁忙（排队的请求太多或等得太久），带 `Retry-After`；504 超时（默认 60 秒）。
+
+中心服务的处理顺序：304 → 中心服务缓存（L2）→ Agent（`/v1/health` 的 `features.image` 不为空时；`full` 只要求 Agent 支持流式读取）→ 其余情况（Agent 没有 Pillow、返回 501 或是旧版本）由中心服务生成。中心服务生成时先把原图暂存到 `<GNM_IMAGE_CACHE_DIR>/spool`，同一文件同时只拉取一次，最近 30 分钟用过的保留（旧版 Agent 没有版本号，只用 5 分钟）。旧版 Agent 的 `full` 先读第一块判断格式，浏览器能直接显示的直接转发。
+
+中心服务对每个 Agent 共用一组长连接，并按类别限制同时进行的请求数：列表 2、缩略图 6、预览和瓦片 6、原图和文件流 4（含中心服务生成时拉取原图），排队超过 20 秒返回 503。浏览器断开时，还在排队或还没开始解码的请求直接放弃。这些数值都可以用 `GNM_IMAGE_*` 环境变量调整（见 README）。
+
+#### 节点 Agent 的图片接口
+
+供中心服务调用，浏览器不直接访问，都要带 `X-Agent-Token`。Agent 使用 HTTP/1.1 长连接，空闲 120 秒后断开。
+
+- `GET /v1/health` 增加 `features`：`{"list": 1, "stream": 1, "image": "<Pillow 版本>", "webp": true, "tiles": true}`。`image` 为 `null` 表示没有可用的 Pillow（没装、低于 7.0 或设置了 `GNM_AGENT_NO_PILLOW=1`）；没有 `features` 的是旧版 Agent。中心服务把结果缓存 60 秒。
+- `GET /v1/files/raw?path=`：用 `sendfile` 流式发送，不限大小；带 `ETag: "<v>"`、`X-Source-Version` 和 `Last-Modified`，`If-None-Match` 一致时返回 304。
+- `GET /v1/files/images?path=<结果集目录>&limit=200000`：内容与 `/api/results/{id}/images` 相同（`source` 为 `agent`），请求接受 gzip 时压缩，支持 `If-None-Match`。目录不存在返回 404，不在允许读取的目录内返回 403。
+- `GET /v1/files/image?path=<绝对路径>&kind=&size=&l=&x=&y=`：返回上面各 kind 的内容，响应头同上（没有 Cache-Control），另有 `X-Source-Version`、`X-Cache`（`hit` / `miss` / `join`）和 `X-Gen-Ms`。错误：400 参数不对或瓦片超出范围，403 不在允许读取的目录内，404，413，415，501（缺少 `imaging.py` 或没有 Pillow；浏览器能直接显示的 `full` 不需要 Pillow），503 带 `Retry-After: 1`。中心服务还会带上 `ctx`（结果集目录），目前不使用。
+
+Agent 的派生图缓存在节点磁盘上，按最近使用淘汰。同一派生图同时只生成一次，同一张图同时只整图解码一次；生成预览时顺带生成缩略图，JPEG 按需缩小解码。整图解码的结果按 LRU 留在内存里，同一张图的后续瓦片不必重新解码。同时进行的解码不超过 `GNM_AGENT_IMAGE_WORKERS` 个，其中缩略图的整图解码最多占 workers − 1 个，给当前图的预览和瓦片留出位置。内存按 `GNM_AGENT_IMAGE_MEM_MB` 预算排队，排队超过 64 个或 30 秒返回 503。客户端断开后，还没开始解码的请求直接放弃，已开始的做完并写入缓存。
 
 ## 刷新频率
 
