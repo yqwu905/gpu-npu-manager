@@ -183,43 +183,40 @@ try {
   const z2 = await perf()
   assert.equal(z2.renders.thumbPanel, afterHold.renders.thumbPanel)
 
-  step('放大状态下换图，再按住切换')
+  const zoomIn = async () => {
+    await page.mouse.move(vp.x + vp.width / 2, vp.y + vp.height / 2)
+    await page.keyboard.down('Control')
+    for (let k = 0; k < 4; k++) { await page.mouse.wheel(0, -300); await page.waitForTimeout(16) }
+    await page.keyboard.up('Control')
+    await until(async () => (await page.getByText('100%', { exact: true }).count()) === 0, '已放大')
+  }
+  const fitted = async (what) => {
+    await until(async () => (await page.getByText('100%', { exact: true }).count()) === 1, what)
+    await allTier('preview')
+  }
+
+  step('放大状态下换图：自动回到 100%，再按住切换')
   await page.keyboard.press('ArrowRight')
-  await allTier('lossless')
-  for (const k of [0, 1]) assert.ok(await exactAt(k), `换图后格子 ${k} 精确`)
+  await fitted('方向键换图后回到 100%')
   await cells.nth(1).getByRole('button', { name: '按住查看 sr-x4-baseline 的当前图' }).hover()
   await page.mouse.down()
   assert.ok(await samePixels(1, 0))
   await page.mouse.up()
+  await zoomIn()
+  await page.locator('.cmp-thumb[data-id="1"][data-i="3"]').click()
+  await fitted('单击缩略图换图后回到 100%')
 
-  step('放大状态下连按方向键：被跳过的序号不请求瓦片，停下后只取最后一张的')
-  await page.evaluate(async () => {
-    const { mockSource } = await window.__mod('mock/images.ts')
-    const log = (window.__rep = { starts: [], keys: [] })
-    const d = (log.orig = mockSource.delay)
-    mockSource.delay = (kind) => { log.starts.push([performance.now(), kind]); return d(kind) }
-    addEventListener('keydown', (e) => log.keys.push(e.timeStamp), true)
-  })
+  step('放大状态下连按方向键：位置逐张前进，停下后为 100%')
+  await zoomIn()
   const h0 = await counts()
   for (let k = 0; k < 6; k++) { await page.keyboard.press('ArrowRight'); await page.waitForTimeout(33) }
-  await allTier('lossless')
-  for (const k of [0, 1, 2]) assert.ok(await exactAt(k), `连按后格子 ${k} 精确`)
-  const rep = await page.evaluate(async () => {
-    const { mockSource } = await window.__mod('mock/images.ts')
-    const { starts, keys, orig } = window.__rep
-    mockSource.delay = orig
-    // 第 2 次按键到最后一次之后 90 ms：开始的瓦片都是被跳过的序号（最后一张推迟到 100 ms 后）
-    const from = keys[1], to = keys.at(-1) + 90
-    return { skippedTiles: starts.filter(([t, k]) => t > from && t < to && (k === 'tile' || k === 'full')).length, tilesAfter: starts.filter(([t, k]) => t >= to && k === 'tile').length }
-  })
+  await fitted('连按后 100%')
   assert.deepEqual(await counts(), h0.map((c) => c.replace(/^\d+/, (x) => String(Number(x) + 6))))
-  assert.equal(rep.skippedTiles, 0, JSON.stringify(rep))
-  assert.ok(rep.tilesAfter > 0, JSON.stringify(rep))
 
   step('适应窗口：回到 100%，不再请求瓦片')
+  await zoomIn()
   await page.getByRole('button', { name: '适应窗口' }).click()
-  await until(async () => (await page.getByText('100%', { exact: true }).count()) === 1, '100%')
-  await allTier('preview')
+  await fitted('100%')
   const fitStarted = (await perf()).lanes.main.started
   await page.keyboard.press('ArrowRight')
   await allTier('preview')
