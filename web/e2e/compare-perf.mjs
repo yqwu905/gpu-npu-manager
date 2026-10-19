@@ -441,16 +441,19 @@ async function zoomRun(k) {
   const exact = []
   for (let k = 0; k < 6; k++) exact.push(await exactAt(s, k, seedOf(MAIN[k])))
   if (!k) await s.page.screenshot({ path: join(OUT, `perf-${TAG}-S5-1600.png`) })
-  // 回到约 260%，换到第 2 张（4K 照片，瓦片），再到第 8 张（8K，冷解码）
+  // 回到约 260%，换到第 2 张（4K 照片，瓦片），再到第 8 张（8K，冷解码）；换图会回到适应窗口，换完再放大到同样比例
   await ctrlWheel(s, 0, 12, 100)
   await waitTiers(s, 'lossless', 15000)
   await idle(s)
+  const zoomBack = () => ctrlWheel(s, 0, 4, -100)
   await s.page.keyboard.press('ArrowRight')
   const ta = await s.page.evaluate(() => window.__m.keys.at(-1))
+  await zoomBack()
   const t4k = (await waitTiers(s, 'lossless', 20000)) - ta
   await idle(s)
   for (let i = 0; i < 6; i++) { await s.page.keyboard.press('ArrowRight'); await s.page.waitForTimeout(33) }
   const tb = await s.page.evaluate(() => window.__m.keys.at(-1))
+  await zoomBack()
   const t8k = (await waitTiers(s, 'lossless', 20000)) - tb
   const at8 = (await s.page.evaluate(HEADS))[0]
   if (!k) await s.page.screenshot({ path: join(OUT, `perf-${TAG}-S5-8k.png`) })
@@ -479,8 +482,8 @@ SC.S5 = async () => {
   gate('S5', 'ThumbPanel 提交次数', Math.max(...out.map((r) => r.thumbPanel)), 0, '==')
   gate('S5', '长任务数（中位数）', med(out.map((r) => r.lt.length)), 0, '==')
   gate('S5', '缩放后全部无损（ms，图案 4K，中位数）', med(out.map((r) => r.losslessAfterWheel)), 1500)
-  gate('S5', '换图后全部无损（ms，4K 瓦片，中位数）', med(out.map((r) => r.t4k)), 1500)
-  gate('S5', '换图后全部无损（ms，8K 冷解码，第一次）', c.t8k, 2500)
+  gate('S5', '换图并放大后全部无损（ms，4K 瓦片，中位数）', med(out.map((r) => r.t4k)), 1500)
+  gate('S5', '换图并放大后全部无损（ms，8K 冷解码，第一次）', c.t8k, 2500)
   gate('S5', '1600% 中心像素精确的格子数（最少）', Math.min(...out.map((r) => r.exact.filter(Boolean).length)), 6, '==')
   gate('S5', '100% 时的瓦片 / 原图请求', Math.max(...out.map((r) => r.lossless1)), 0, '==')
 }
@@ -592,6 +595,7 @@ SC.S8 = async () => {
   for (let k = 1; k <= 30; k++) {
     await s.page.keyboard.press('ArrowRight')
     const tk = await s.page.evaluate(() => window.__m.keys.at(-1))
+    await ctrlWheel(s, 0, 5, -93) // 换图回到适应窗口，再放大到约 200%
     let tl = null
     try { tl = (await waitTiers(s, 'lossless', 8000)) - tk } catch { tl = Infinity }
     const p = await perfOf(s)

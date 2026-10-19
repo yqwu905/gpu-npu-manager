@@ -92,6 +92,8 @@ function CompareImages({ ids, nameOf, colorOf }: Props) {
     const name = ix.names[i]
     const seq = ++altSeq.current
     perf.mark('cmp:switch')
+    // 换图后回到适应窗口，不沿用上一张的缩放平移
+    store.reset()
     if (isMod(e)) {
       setCur((c) => syncAll(c, ids, lens, i))
       setStatus(`${MOD_KEY} 按序号同步 · 第 ${i + 1} 张`)
@@ -123,6 +125,7 @@ function CompareImages({ ids, nameOf, colorOf }: Props) {
     dir.current = d
     loader.noteStep()
     perf.mark('cmp:switch')
+    store.reset()
     setCur((c) => stepAll(c, ids, lens, d))
     setStatus(`${d < 0 ? '上一张' : '下一张'} · 全部结果`)
   }, [])
