@@ -282,3 +282,66 @@ def test_job_log(client):
     assert client.get(f"/api/jobs/{j['id']}/log").json() == {"offset": 0, "next_offset": 0, "size": 0, "data": ""}
     tick(client)
     assert client.get(f"/api/jobs/{j['id']}/log", params={"offset": 2}).json()["data"] == "llo\n"
+
+
+def test_preempt_and_resume(client, cluster):
+    # srv-b 4 张卡：两个可被抢占的低优先级任务各占 2 张
+    low1 = submit(client, num_devices=2, server_id=2, preemptible=True, priority=-1)
+    low2 = submit(client, num_devices=2, server_id=2, preemptible=True)
+    normal = submit(client, num_devices=2, server_id=1)  # srv-a 被不可抢占的任务占满
+    tick(client)
+    assert job(client, low1["id"])["preemptible"] is True and job(client, normal["id"])["preemptible"] is False
+    assert all(job(client, j["id"])["status"] == "running" for j in (low1, low2, normal))
+
+    # 同优先级不抢占
+    same = submit(client, num_devices=2, group="cv", priority=-1)
+    tick(client)
+    assert job(client, same["id"])["status"] == "queued"
+    client.post(f"/api/jobs/{same['id']}/cancel")
+
+    # 高优先级任务需要 2 张卡：只抢占优先级最低的 low1，不动 normal
+    high = submit(client, num_devices=2, group="cv", priority=5)
+    # 被终止的进程退出前卡仍被占用
+    low1_devices = job(client, low1["id"])["device_indices"]
+    for i in low1_devices:
+        cluster.hosts["b"]["devices"][i]["processes"] = [{"pid": 1, "name": "python", "memory_mb": 100}]
+    tick(client)
+    victim = job(client, low1["id"])
+    assert victim["status"] == "queued" and victim["preempt_count"] == 1 and f"#{high['id']}" in victim["error"]
+    assert cluster.hosts["b"]["jobs"][f"gnm-{low1['id']}"]["killed"] is True
+    assert job(client, low2["id"])["status"] == "running"
+    assert job(client, high["id"])["wait_reason"] == f"正在抢占任务 #{low1['id']}，等待其退出释放卡"
+
+    # 卡还没空出来时只等待，不再抢占别的任务
+    tick(client)
+    assert job(client, low2["id"])["status"] == "running"
+    assert job(client, high["id"])["wait_reason"] == f"已抢占任务 #{low1['id']}，等待其退出释放卡"
+
+    for i in low1_devices:
+        cluster.hosts["b"]["devices"][i]["processes"] = []
+    tick(client)
+    h = job(client, high["id"])
+    assert (h["status"], h["assigned_server_name"], h["device_indices"]) == ("running", "srv-b", low1_devices)
+    assert job(client, low1["id"])["status"] == "queued"
+
+    # 高优先级任务结束后，被抢占的任务以新的 Agent 任务 ID 从头重新运行
+    cluster.finish("b", high["id"])
+    tick(client)
+    tick(client)
+    resumed = job(client, low1["id"])
+    assert (resumed["status"], resumed["error"], resumed["device_indices"]) == ("running", None, low1_devices)
+    assert cluster.hosts["b"]["jobs"][f"gnm-{low1['id']}-r1"]["state"] == "running"
+    assert client.get(f"/api/jobs/{low1['id']}/log").json()["data"] == "hello\n"
+    assert client.post(f"/api/jobs/{low1['id']}/cancel").json()["status"] == "cancelled"
+    assert cluster.hosts["b"]["jobs"][f"gnm-{low1['id']}-r1"]["killed"] is True
+
+    # 复制参数重新排队时保留“可被抢占”
+    assert client.post(f"/api/jobs/{low1['id']}/requeue").json()["preemptible"] is True
+
+
+def test_job_search(client):
+    a = submit(client, name="sr-train", submitter="alice")
+    submit(client, name="ocr-eval", submitter="bob", command="python eval.py")
+    assert [j["id"] for j in client.get("/api/jobs", params={"q": "ALICE"}).json()["items"]] == [a["id"]]
+    assert [j["id"] for j in client.get("/api/jobs", params={"q": f"#{a['id']}"}).json()["items"]] == [a["id"]]
+    assert client.get("/api/jobs", params={"q": "eval"}).json()["total"] == 1

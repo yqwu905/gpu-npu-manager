@@ -13,7 +13,7 @@ function job(
 ): Job {
   const started = startedMin === null ? null : ago(startedMin)
   return {
-    id, name, submitter, status, num_devices, group, priority, accelerator: null, queue_position: null, error: null, requeued_from: null,
+    id, name, submitter, status, num_devices, group, priority, accelerator: null, preemptible: false, preempt_count: 0, queue_position: null, error: null, requeued_from: null,
     command: num_devices === 0 ? `python eval/run.py --result /data/results/${name}` : `torchrun --nproc_per_node=${num_devices} train.py --config configs/${name}.yaml`,
     workdir: `/data/projects/${name.split(' ')[0]}`,
     env: { HF_HOME: '/data/hf', WANDB_MODE: 'offline' },
@@ -37,14 +37,16 @@ let jobs: Job[] = [
   job(1293, 'sd-ft-lora-v3', '张三', 'queued', 4, '训练组', null, [], 5, 12, null, null, { wait_reason: '下一轮调度：gpu-a100-02 有 4 张空闲卡' }),
   job(1295, 'llm-sft-7b-zh', '李四', 'queued', 8, '训练组', null, [], 0, 72, null, null, { wait_reason: '训练组没有一台服务器有 8 张空闲卡（npu-910b-05 空闲 8 张但不参与调度）' }),
   job(1296, 'ocr-eval-batch7', '孙八', 'queued', 0, '评测组', null, [], 0, 3, null, null),
-  job(1297, 'sr-x4-v4-infer', '王五', 'queued', 2, '推理组', null, [], 0, 1, null, null),
+  job(1297, 'sr-x4-v4-infer', '王五', 'queued', 2, '推理组', null, [], 0, 1, null, null, {
+    preemptible: true, preempt_count: 1, error: '被任务 #1293（sd-ft-lora-v3）抢占，已重新排队，有空闲卡后自动重新运行',
+  }),
   job(1298, 'sr-x4-v4-eval', '王五', 'queued', 0, '评测组', null, [], -1, 0, null, null, { wait_reason: '回填中：优先级较低，等前面的任务调度后再尝试' }),
   job(1285, 'llm-pretrain-1.3b', '钱七', 'running', 8, '训练组', [8, 'npu-910b-01'], range(0, 7), 0, 291, 290, null),
   job(1286, 'ocr-qwen-vl-ft-v2 推理', '孙八', 'running', 2, '推理组', [10, 'npu-910b-03'], [0, 1], 0, 143, 142, null),
   job(1287, 'llama-sft-13b', '张三', 'running', 8, '训练组', [1, 'gpu-a100-01'], range(0, 7), 3, 238, 237, null),
   job(1288, 'deblur-v1 评测', '赵六', 'running', 2, '评测组', [6, 'gpu-4090-01'], [0, 1], 0, 32, 31, null),
   job(1289, 'llm-sft-7b-zh-dpo', '李四', 'running', 6, '训练组', [3, 'gpu-h800-01'], range(0, 5), 0, 103, 102, null),
-  job(1290, 'sd-ft-lora-v2', '张三', 'running', 4, '训练组', [2, 'gpu-a100-02'], range(0, 3), 0, 75, 74, null),
+  job(1290, 'sd-ft-lora-v2', '张三', 'running', 4, '训练组', [2, 'gpu-a100-02'], range(0, 3), -5, 75, 74, null, { preemptible: true }),
   job(1291, 'ocr-det-train', '钱七', 'running', 4, '训练组', [9, 'npu-910b-02'], range(0, 3), 0, 61, 60, null),
   job(1292, 'sr-x4-v4-train', '王五', 'running', 1, '推理组', [4, 'gpu-l40s-01'], [0], 0, 48, 47, null),
   job(1294, 'ocr-910b-int8-bench', '赵六', 'running', 1, '评测组', [13, 'npu-310p-01'], [0], 0, 19, 18, null),
@@ -76,10 +78,17 @@ function logText(j: Job): string {
   return lines.map((l) => `[示例] ${l}\n`).join('')
 }
 
+function matchKeyword(j: Job, q: string): boolean {
+  const k = q.trim().toLowerCase()
+  const id = k.replace(/^#/, '')
+  return [j.name, j.command, j.submitter ?? ''].some((s) => s.toLowerCase().includes(k)) || (/^\d+$/.test(id) && j.id === Number(id))
+}
+
 export const mockJobs = {
   list(q: JobQuery): JobPage {
     const items = jobs
-      .filter((j) => (!q.status?.length || q.status.includes(j.status)) && (!q.submitter || j.submitter === q.submitter) && (!q.group || j.group === q.group))
+      .filter((j) => (!q.status?.length || q.status.includes(j.status)) && (!q.submitter || j.submitter === q.submitter) && (!q.group || j.group === q.group)
+        && (!q.q || matchKeyword(j, q.q)))
       .sort((a, b) => b.id - a.id)
     const queued = jobs.filter((j) => j.status === 'queued').sort((a, b) => b.priority - a.priority || a.created_at.localeCompare(b.created_at))
     return { total: items.length, items: items.map((j) => ({ ...j, queue_position: j.status === 'queued' ? queued.indexOf(j) + 1 : null })) }
@@ -87,7 +96,7 @@ export const mockJobs = {
   get: (id: number) => find(id),
   create(body: JobCreate): Job {
     const j = job(nextId++, body.name || body.command.split('\n')[0].slice(0, 60), body.submitter || '', 'queued', body.num_devices, body.group ?? '', null, [], body.priority ?? 0, 0, null, null, {
-      command: body.command, workdir: body.workdir ?? null, env: body.env ?? {}, server_id: body.server_id ?? null,
+      command: body.command, workdir: body.workdir ?? null, env: body.env ?? {}, server_id: body.server_id ?? null, preemptible: body.preemptible ?? false,
     })
     jobs = [...jobs, j]
     return j
@@ -102,7 +111,7 @@ export const mockJobs = {
   },
   requeue(id: number): Job {
     const j = find(id)
-    const n: Job = { ...j, id: nextId++, status: 'queued', assigned_server_id: null, assigned_server_name: null, device_indices: [], pid: null, exit_code: null,
+    const n: Job = { ...j, id: nextId++, status: 'queued', preempt_count: 0, assigned_server_id: null, assigned_server_name: null, device_indices: [], pid: null, exit_code: null,
       error: null, requeued_from: j.id, wait_reason: '下一轮调度', created_at: new Date().toISOString(), started_at: null, finished_at: null }
     jobs = [...jobs, n]
     return n

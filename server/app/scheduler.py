@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -15,6 +16,9 @@ from .models import JOB_ACTIVE_STATUSES, Job, Server
 from .views import device_is_idle, occupied_devices
 
 log = logging.getLogger(__name__)
+
+# 抢占后等待被抢占任务退出、卡空出来的最长时间，超时后可以重新选择要抢占的任务
+PREEMPT_WAIT = 120
 
 
 def queue_order(query):
@@ -65,6 +69,31 @@ def _wait_reason(job: Job, matching: list[Server], free: dict[int, list[int]]) -
     return f"{scope}：单台服务器最多空闲 {most} 张卡，需要 {job.num_devices} 张"
 
 
+def _pick_victims(job: Job, matching: list[Server], free: dict[int, list[int]], running: dict[int, list[Job]],
+                  taken: set[int]) -> tuple[Server, list[Job]] | None:
+    """在一台服务器上选出优先级更低的可抢占任务，让出的卡加上空闲卡足够运行 job。"""
+    best = None
+    for server in matching:
+        need = job.num_devices - len(free[server.id])
+        pool = [v for v in running.get(server.id, []) if v.priority < job.priority and v.id not in taken]
+        # 先抢占优先级最低的，同优先级先抢占最晚启动的，损失的运行时间最少
+        pool.sort(key=lambda v: v.started_at.timestamp() if v.started_at else 0, reverse=True)
+        pool.sort(key=lambda v: v.priority)
+        chosen, got = [], 0
+        for victim in pool:
+            if got >= need:
+                break
+            chosen.append(victim)
+            got += len(victim.device_indices or [])
+        if got < need:
+            continue
+        # 让出的卡最少，其次被抢占的任务最少
+        key = (got, len(chosen), server.name)
+        if best is None or key < best[0]:
+            best = (key, server, chosen)
+    return None if best is None else (best[1], best[2])
+
+
 @dataclass
 class Launch:
     job_id: int
@@ -74,6 +103,17 @@ class Launch:
     workdir: str | None
     env: dict
     devices: list[int]
+    run: int
+
+
+@dataclass
+class Preemption:
+    job_id: int
+    run: int
+    host: str
+    port: int
+    by_id: int
+    by_name: str
 
 
 @dataclass
@@ -83,6 +123,7 @@ class ActiveJob:
     host: str
     port: int
     server_status: str
+    run: int
 
 
 class Scheduler:
@@ -99,6 +140,8 @@ class Scheduler:
         self.strict_order = settings.schedule_strict
         # 排队任务没被调度的原因，每轮调度重新计算
         self.wait_reasons: dict[int, str] = {}
+        # 已发起抢占、等待卡空出来的任务：任务 ID -> (服务器 ID, 截止时间, 被抢占的任务 ID)
+        self.preempting: dict[int, tuple[int, float, list[int]]] = {}
 
     # ------------------------------------------------------------------
     # 同步运行中任务
@@ -107,11 +150,11 @@ class Scheduler:
     def _active_jobs(self) -> list[ActiveJob]:
         with self.session_factory() as session:
             rows = session.execute(
-                select(Job.id, Job.status, Server.host, Server.port, Server.status)
+                select(Job.id, Job.status, Server.host, Server.port, Server.status, Job.preempt_count)
                 .join(Server, Job.assigned_server_id == Server.id)
                 .where(Job.status.in_(JOB_ACTIVE_STATUSES))
             ).all()
-            return [ActiveJob(*row) for row in rows]
+            return [ActiveJob(*row[:5], row[5] or 0) for row in rows]
 
     def _update_job(self, job_id: int, info: dict | None = None, *, lost: bool = False, missing: bool = False) -> None:
         now = datetime.now(timezone.utc)
@@ -141,7 +184,7 @@ class Scheduler:
                     await asyncio.to_thread(self._update_job, active.job_id, lost=True)
                 continue
             try:
-                info = await self.agent.get_job(active.host, active.port, active.job_id)
+                info = await self.agent.get_job(active.host, active.port, active.job_id, run=active.run)
             except AgentError as exc:
                 if exc.status == 404:
                     await asyncio.to_thread(self._update_job, active.job_id, missing=True)
@@ -153,8 +196,8 @@ class Scheduler:
     # 分配排队任务
     # ------------------------------------------------------------------
 
-    def _plan(self) -> list[Launch]:
-        """为排队任务选择服务器和卡，并把选中的任务标记为 starting。"""
+    def _plan(self) -> tuple[list[Launch], list[Preemption]]:
+        """为排队任务选择服务器和卡，并把选中的任务标记为 starting；放不下时选出要抢占的任务。"""
         with self.session_factory() as session:
             servers = list(
                 session.scalars(
@@ -168,7 +211,18 @@ class Scheduler:
             free = {
                 s.id: [d.index for d in s.devices if device_is_idle(s, d, self.settings, occupied)] for s in servers
             }
+            running: dict[int, list[Job]] = {}
+            for victim in session.scalars(
+                select(Job).where(Job.status == "running", Job.preemptible.is_(True)).order_by(Job.id)
+            ):
+                if victim.device_indices:
+                    running.setdefault(victim.assigned_server_id, []).append(victim)
+            hosts = {s.id: (s.host, s.port) for s in servers}
+            now = time.monotonic()
             launches = []
+            preemptions = []
+            preempting = {}
+            taken: set[int] = set()
             reasons = {}
             blocker = None
             for job in session.scalars(queue_order(select(Job).where(Job.status == "queued"))):
@@ -185,6 +239,22 @@ class Scheduler:
                 candidates = [s for s in matching if len(free[s.id]) >= job.num_devices]
                 if not candidates:
                     reasons[job.id] = _wait_reason(job, matching, free)
+                    waiting = self.preempting.get(job.id)
+                    if waiting is not None and waiting[1] > now and waiting[0] in free:
+                        # 已经抢占过，等被抢占的任务退出；先空出来的卡留给它，不分给后面的任务
+                        free[waiting[0]] = []
+                        preempting[job.id] = waiting
+                        reasons[job.id] = "已抢占任务 " + "、".join(f"#{i}" for i in waiting[2]) + "，等待其退出释放卡"
+                    elif (plan := _pick_victims(job, matching, free, running, taken)) is not None:
+                        server, victims = plan
+                        free[server.id] = []
+                        taken.update(v.id for v in victims)
+                        preempting[job.id] = (server.id, now + PREEMPT_WAIT, [v.id for v in victims])
+                        reasons[job.id] = "正在抢占任务 " + "、".join(f"#{v.id}" for v in victims) + "，等待其退出释放卡"
+                        for victim in victims:
+                            preemptions.append(
+                                Preemption(victim.id, victim.preempt_count or 0, *hosts[server.id], job.id, job.name)
+                            )
                     if self.strict_order:
                         blocker = job
                     continue
@@ -197,11 +267,29 @@ class Scheduler:
                 job.device_indices = devices
                 job.error = None
                 launches.append(
-                    Launch(job.id, server.host, server.port, job.command, job.workdir, job.env or {}, devices)
+                    Launch(
+                        job.id, server.host, server.port, job.command, job.workdir, job.env or {}, devices,
+                        job.preempt_count or 0,
+                    )
                 )
             session.commit()
             self.wait_reasons = reasons
-            return launches
+            self.preempting = preempting
+            return launches, preemptions
+
+    def _preempted(self, preemption: Preemption, info: dict) -> None:
+        """被抢占的进程已终止：任务重新排队，等有空闲卡时重新运行。"""
+        with self.session_factory() as session:
+            job = session.get(Job, preemption.job_id)
+            if job is None or job.status != "running":
+                return
+            if info.get("killed"):
+                _requeue(job, f"被任务 #{preemption.by_id}（{preemption.by_name}）抢占，已重新排队，有空闲卡后自动重新运行")
+                job.preempt_count = (job.preempt_count or 0) + 1
+            else:
+                # 抢占前进程已经自己结束
+                apply_agent_state(job, info, datetime.now(timezone.utc))
+            session.commit()
 
     def _launched(self, job_id: int, info: dict) -> bool:
         """记录启动成功；任务在启动途中被取消时返回 False。"""
@@ -232,10 +320,20 @@ class Scheduler:
             session.commit()
 
     async def schedule(self) -> None:
-        for launch in await asyncio.to_thread(self._plan):
+        launches, preemptions = await asyncio.to_thread(self._plan)
+        for preemption in preemptions:
+            try:
+                info = await self.agent.kill_job(preemption.host, preemption.port, preemption.job_id, run=preemption.run)
+            except AgentError as exc:
+                # 终止失败时任务保持运行，等待超时后可以重新选择要抢占的任务
+                log.warning("job %s preempt failed: %s", preemption.job_id, exc)
+                continue
+            await asyncio.to_thread(self._preempted, preemption, info)
+        for launch in launches:
             try:
                 info = await self.agent.start_job(
-                    launch.host, launch.port, launch.job_id, launch.command, launch.workdir, launch.env, launch.devices
+                    launch.host, launch.port, launch.job_id, launch.command, launch.workdir, launch.env, launch.devices,
+                    run=launch.run,
                 )
             except AgentError as exc:
                 if exc.status is None:
@@ -250,7 +348,7 @@ class Scheduler:
             if not await asyncio.to_thread(self._launched, launch.job_id, info):
                 # 启动途中任务被取消，终止刚启动的进程
                 try:
-                    await self.agent.kill_job(launch.host, launch.port, launch.job_id)
+                    await self.agent.kill_job(launch.host, launch.port, launch.job_id, run=launch.run)
                 except AgentError as exc:
                     log.warning("job %s cancelled during launch, kill failed: %s", launch.job_id, exc)
 

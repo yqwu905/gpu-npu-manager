@@ -11,7 +11,7 @@ from ..timeutil import as_utc
 
 router = APIRouter(prefix="/api", tags=["jobs"])
 
-COPY_FIELDS = ("name", "command", "workdir", "env", "num_devices", "group", "accelerator", "server_id", "priority", "submitter")
+COPY_FIELDS = ("name", "command", "workdir", "env", "num_devices", "group", "accelerator", "server_id", "priority", "submitter", "preemptible")
 
 
 def _queue_positions(session: Session) -> dict[int, int]:
@@ -71,7 +71,7 @@ def list_jobs(
     group: str | None = Query(None, description="运行组"),
     submitter: str | None = Query(None, description="提交人"),
     server_id: int | None = Query(None, description="实际运行的服务器"),
-    q: str | None = Query(None, description="关键字，匹配名称和命令"),
+    q: str | None = Query(None, description="关键字，匹配名称、命令和提交人；纯数字或 #数字 时也匹配任务 ID"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
     session: Session = Depends(get_session),
@@ -87,7 +87,10 @@ def list_jobs(
         query = query.where(Job.assigned_server_id == server_id)
     if q:
         pattern = f"%{q}%"
-        query = query.where(or_(Job.name.ilike(pattern), Job.command.ilike(pattern)))
+        conds = [Job.name.ilike(pattern), Job.command.ilike(pattern), Job.submitter.ilike(pattern)]
+        if q.strip().lstrip("#").isdigit():
+            conds.append(Job.id == int(q.strip().lstrip("#")))
+        query = query.where(or_(*conds))
     total = session.scalar(select(func.count()).select_from(query.subquery()))
     if status and set(status) == {"queued"}:
         query = queue_order(query)  # 只看排队任务时按调度顺序返回
@@ -131,11 +134,11 @@ async def cancel_job(
             raise HTTPException(409, "任务已结束")
         target = None
         if job.status in JOB_ACTIVE_STATUSES and job.assigned_server is not None:
-            target = (job.assigned_server.host, job.assigned_server.port)
+            target = (job.assigned_server.host, job.assigned_server.port, job.preempt_count or 0)
     error = None
     if target is not None:
         try:
-            await request.app.state.scheduler.agent.kill_job(target[0], target[1], job_id)
+            await request.app.state.scheduler.agent.kill_job(target[0], target[1], job_id, run=target[2])
         except AgentError as exc:
             # 404：进程从未启动，直接视为取消成功
             if exc.status != 404:
@@ -189,9 +192,9 @@ async def job_log(
         server = job.assigned_server
         if server is None or job.status == "queued":
             return JobLog(offset=0, next_offset=0, size=0, data="")
-        host, port = server.host, server.port
+        host, port, run = server.host, server.port, job.preempt_count or 0
     try:
-        return await request.app.state.scheduler.agent.read_log(host, port, job_id, offset, limit)
+        return await request.app.state.scheduler.agent.read_log(host, port, job_id, offset, limit, run=run)
     except AgentError as exc:
         if exc.status == 404:
             return JobLog(offset=0, next_offset=0, size=0, data="")
