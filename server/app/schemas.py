@@ -211,6 +211,10 @@ class JobCreate(BaseModel):
     server_id: int | None = Field(default=None, description="指定服务器，为空表示由调度器选择")
     priority: int = Field(default=0, ge=-100, le=100, description="优先级，越大越先调度")
     submitter: str | None = Field(default=None, max_length=128, description="提交人")
+    preemptible: bool = Field(
+        default=False,
+        description="可被抢占：运行中遇到放不下的更高优先级任务时让出卡并重新排队，有空闲卡后自动重新运行（从头运行）",
+    )
 
     @field_validator("env")
     @classmethod
@@ -240,6 +244,8 @@ class JobOut(BaseModel):
     server_id: int | None = None
     priority: int
     submitter: str | None = None
+    preemptible: bool = Field(default=False, description="可被抢占")
+    preempt_count: int = Field(default=0, description="被抢占的次数")
     status: JobStatus = Field(
         description="queued 排队中 / starting 启动中 / running 运行中 / lost 失联 / "
         "succeeded 成功 / failed 失败 / cancelled 已取消"
@@ -256,6 +262,12 @@ class JobOut(BaseModel):
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
+
+    @field_validator("preemptible", "preempt_count", mode="before")
+    @classmethod
+    def _null_as_default(cls, value):
+        # 升级前的任务这两列为空
+        return value or 0
 
 
 class JobPage(BaseModel):

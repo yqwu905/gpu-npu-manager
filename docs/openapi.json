@@ -1171,10 +1171,10 @@
                   "type": "null"
                 }
               ],
-              "description": "关键字，匹配名称和命令",
+              "description": "关键字，匹配名称、命令和提交人；纯数字或 #数字 时也匹配任务 ID",
               "title": "Q"
             },
-            "description": "关键字，匹配名称和命令"
+            "description": "关键字，匹配名称、命令和提交人；纯数字或 #数字 时也匹配任务 ID"
           },
           {
             "name": "limit",
@@ -2253,6 +2253,235 @@
         "responses": {
           "200": {
             "description": "图片；响应头 X-Image-Width / X-Image-Height 为原图（按 EXIF 方向转正后）的尺寸",
+            "content": {
+              "image/jpeg": {},
+              "image/webp": {},
+              "image/png": {},
+              "image/gif": {},
+              "image/bmp": {}
+            }
+          },
+          "304": {
+            "description": "If-None-Match 与 ETag 一致"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/lq-sets": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "评测用过的 LQ 数据集（图片对比用）",
+        "operationId": "list_lq_sets_api_lq_sets_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LqSetOut"
+                  },
+                  "type": "array",
+                  "title": "Response List Lq Sets Api Lq Sets Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/lq-sets/{lq_id}/images": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "LQ 数据集的全部图片，同 /results/{id}/images",
+        "operationId": "lq_images_api_lq_sets__lq_id__images_get",
+        "parameters": [
+          {
+            "name": "lq_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Lq Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImageList"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "If-None-Match 与 ETag 一致，列表没有变化"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/lq-sets/{lq_id}/image": {
+      "get": {
+        "tags": [
+          "results"
+        ],
+        "summary": "LQ 图片的缩略图、预览、无损原图或瓦片，同 /results/{id}/image",
+        "operationId": "lq_image_api_lq_sets__lq_id__image_get",
+        "parameters": [
+          {
+            "name": "lq_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Lq Id"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "相对 LQ 目录的路径",
+              "title": "Path"
+            },
+            "description": "相对 LQ 目录的路径"
+          },
+          {
+            "name": "v",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{10}$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "版本号（/images 返回）；与文件当前版本一致时浏览器可永久缓存",
+              "title": "V"
+            },
+            "description": "版本号（/images 返回）；与文件当前版本一致时浏览器可永久缓存"
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "thumb",
+                "preview",
+                "full",
+                "tile"
+              ],
+              "type": "string",
+              "default": "thumb",
+              "title": "Kind"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Size"
+            }
+          },
+          {
+            "name": "l",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "L"
+            }
+          },
+          {
+            "name": "x",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X"
+            }
+          },
+          {
+            "name": "y",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Y"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
             "content": {
               "image/jpeg": {},
               "image/webp": {},
@@ -4813,6 +5042,12 @@
             ],
             "title": "Submitter",
             "description": "提交人"
+          },
+          "preemptible": {
+            "type": "boolean",
+            "title": "Preemptible",
+            "description": "可被抢占：运行中遇到放不下的更高优先级任务时让出卡并重新排队，有空闲卡后自动重新运行（从头运行）",
+            "default": false
           }
         },
         "type": "object",
@@ -4936,6 +5171,18 @@
               }
             ],
             "title": "Submitter"
+          },
+          "preemptible": {
+            "type": "boolean",
+            "title": "Preemptible",
+            "description": "可被抢占",
+            "default": false
+          },
+          "preempt_count": {
+            "type": "integer",
+            "title": "Preempt Count",
+            "description": "被抢占的次数",
+            "default": 0
           },
           "status": {
             "type": "string",
@@ -5146,6 +5393,53 @@
         },
         "type": "object",
         "title": "JobUpdate"
+      },
+      "LqSetOut": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "LQ 目录名"
+          },
+          "lq_dir": {
+            "type": "string",
+            "title": "Lq Dir"
+          },
+          "server_id": {
+            "type": "integer",
+            "title": "Server Id"
+          },
+          "server_name": {
+            "type": "string",
+            "title": "Server Name"
+          },
+          "config_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Name",
+            "description": "评测配置名"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "lq_dir",
+          "server_id",
+          "server_name"
+        ],
+        "title": "LqSetOut",
+        "description": "评测用过的 LQ 数据集，按（评测服务器, LQ 目录）去重；id 为第一次用到它的评测 ID。"
       },
       "MetricCompare": {
         "properties": {

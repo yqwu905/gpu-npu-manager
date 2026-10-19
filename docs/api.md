@@ -207,6 +207,8 @@
 
 任务是在单台服务器上运行的一条 shell 命令（以 Agent 运行用户的 `bash -l` 执行）。调度器每 5 秒扫描一次队列：按优先级从高到低、提交时间从早到晚，为每个任务在满足条件的服务器中找足够的空闲卡；多台都满足时选空闲卡最少的那台，减少碎片。排在前面的任务放不下时，默认允许后面的小任务先运行（回填）；切换为严格按序后，前面的任务放不下时后面的任务也不调度（见 `/api/scheduler`）。
 
+**可被抢占的任务**（`preemptible: true`）：排队任务在空闲卡上放不下时，调度器会在满足条件的服务器上找优先级比它**严格更低**、正在运行的可被抢占任务，终止它们的进程（与取消相同，先 SIGTERM，10 秒后 SIGKILL）让出卡。优先抢占优先级最低、同优先级里最晚启动的任务，并选让出卡最少的服务器。被抢占的任务回到 `queued`，`preempt_count` 加 1，`error` 写明被哪个任务抢占；它保留原来的优先级和提交时间，等有空闲卡（通常是高优先级任务结束后）自动重新运行。重新运行是**从头执行同一条命令**，需要断点续跑时由命令自己加载检查点。抢占发起后，在被抢占进程退出、卡空出来之前（最多等 120 秒）不会再抢占别的任务，空出来的卡也不会分给优先级更低的任务。同优先级之间不抢占，不可被抢占的任务永远不会被抢占。
+
 分配到的卡号通过 `CUDA_VISIBLE_DEVICES`（GPU）或 `ASCEND_RT_VISIBLE_DEVICES`（NPU）传给进程，另有 `GNM_JOB_ID` 环境变量。
 
 ### 状态
@@ -234,11 +236,12 @@
   "accelerator": null,
   "server_id": null,
   "priority": 0,
-  "submitter": "alice"
+  "submitter": "alice",
+  "preemptible": false
 }
 ```
 
-只有 `command` 必填。`name` 不填时取命令第一行；`num_devices` 默认 1，可以为 0（不需要卡）；`group`、`accelerator`（`gpu`/`npu`）、`server_id` 为空表示不限；`priority` 范围 -100 到 100，越大越先调度。没有任何服务器能满足条件（运行组、类型、卡数）时返回 422。
+只有 `command` 必填。`name` 不填时取命令第一行；`num_devices` 默认 1，可以为 0（不需要卡）；`group`、`accelerator`（`gpu`/`npu`）、`server_id` 为空表示不限；`priority` 范围 -100 到 100，越大越先调度；`preemptible` 默认 false，为 true 时任务可被更高优先级的任务抢占（见上文）。没有任何服务器能满足条件（运行组、类型、卡数）时返回 422。
 
 返回 `JobOut`。排队中的任务 `wait_reason` 说明为什么还没被调度，每轮调度更新，刚提交还没经过一轮调度时为 `null`，例如：
 
@@ -252,7 +255,7 @@
   "id": 42, "name": "resnet50-train", "command": "python train.py --epochs 10",
   "workdir": "/home/alice/project", "env": {"BATCH_SIZE": "64"},
   "num_devices": 2, "group": "cv", "accelerator": null, "server_id": null,
-  "priority": 0, "submitter": "alice",
+  "priority": 0, "submitter": "alice", "preemptible": false, "preempt_count": 0,
   "status": "running", "queue_position": null, "wait_reason": null,
   "assigned_server_id": 3, "assigned_server_name": "gpu-03", "device_indices": [0, 1],
   "pid": 12345, "exit_code": null, "error": null, "requeued_from": null,
@@ -270,7 +273,7 @@
 | `group` | 运行组 |
 | `submitter` | 提交人 |
 | `server_id` | 实际运行的服务器 |
-| `q` | 关键字，匹配名称和命令 |
+| `q` | 关键字，匹配名称、命令和提交人（不区分大小写）；纯数字或 `#数字` 时也匹配任务 ID |
 | `limit` / `offset` | 分页，默认 50 / 0 |
 
 ### GET /api/jobs/{id}
@@ -291,7 +294,7 @@
 
 ### POST /api/jobs/{id}/requeue
 
-以相同参数创建一个新任务（`requeued_from` 指向原任务），只能对已结束的任务操作，返回新任务。
+以相同参数（包括 `preemptible`）创建一个新任务（`requeued_from` 指向原任务），只能对已结束的任务操作，返回新任务。
 
 ### GET /api/scheduler
 

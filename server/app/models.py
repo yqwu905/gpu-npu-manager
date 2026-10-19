@@ -121,6 +121,10 @@ class Job(Base):
     server_id: Mapped[int | None] = mapped_column(ForeignKey("servers.id", ondelete="SET NULL"), nullable=True)
     priority: Mapped[int] = mapped_column(Integer, default=0)
     submitter: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    # 可被抢占：运行中遇到放不下的更高优先级任务时，进程被终止、卡被让出，任务重新排队
+    preemptible: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
+    # 被抢占的次数，也用来区分每次运行在 Agent 上的任务 ID
+    preempt_count: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
 
     # queued / starting / running / lost / succeeded / failed / cancelled
     status: Mapped[str] = mapped_column(String(16), default="queued", index=True)

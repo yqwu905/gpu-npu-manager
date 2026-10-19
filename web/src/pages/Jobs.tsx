@@ -34,20 +34,36 @@ export default function JobsPage() {
   const [tab, setTab] = useState<'all' | JobStatus>('all')
   const [submitter, setSubmitter] = useState('')
   const [group, setGroup] = useState('')
+  const [server, setServer] = useState('')
+  const [preempt, setPreempt] = useState<'' | 'yes' | 'no'>('')
+  const [search, setSearch] = useState('')
+  const [q, setQ] = useState('')
   const [showSubmit, setShowSubmit] = useState(false)
   const [copyFrom, setCopyFrom] = useState<Job | null>(null)
   const [actionErr, setActionErr] = useState<string | null>(null)
-  const jobs = usePoll(() => jobsApi.list(), [], 5_000)
+  // 关键字交给后端搜索，能搜到最近 200 条以外的历史任务；输入停顿后再请求
+  useEffect(() => {
+    const t = setTimeout(() => setQ(search.trim()), 300)
+    return () => clearTimeout(t)
+  }, [search])
+  const jobs = usePoll(() => jobsApi.list({ q: q || undefined }), [q], 5_000)
   const sched = usePoll(() => jobsApi.scheduler(), [], 30_000)
   const mock = useMock('jobs')
   const schedMock = useMock('scheduler')
 
   const all = jobs.data?.items ?? []
-  const rows = sortJobs(all.filter((j) => (tab === 'all' || j.status === tab) && (!submitter || j.submitter === submitter) && (!group || j.group === group)))
+  const filtered = all.filter((j) => (!submitter || j.submitter === submitter) && (!group || j.group === group)
+    && (!server || j.assigned_server_name === server) && (!preempt || j.preemptible === (preempt === 'yes')))
+  const rows = sortJobs(filtered.filter((j) => tab === 'all' || j.status === tab))
   const selId = Number(params.get('id')) || rows[0]?.id
   const sel = all.find((j) => j.id === selId)
-  const submitters = [...new Set(all.map((j) => j.submitter).filter(Boolean))] as string[]
-  const groups = [...new Set(all.map((j) => j.group).filter(Boolean))] as string[]
+  // 选项来自当前列表，已选中的值即使不在结果里也保留
+  const options = (vals: (string | null)[], cur: string) => [...new Set([...vals, cur].filter(Boolean))].sort() as string[]
+  const submitters = options(all.map((j) => j.submitter), submitter)
+  const groups = options(all.map((j) => j.group), group)
+  const serverNames = options(all.map((j) => j.assigned_server_name), server)
+  const filtering = !!(search || submitter || group || server || preempt)
+  const clearFilters = () => { setSearch(''); setQ(''); setSubmitter(''); setGroup(''); setServer(''); setPreempt('') }
 
   const act = async (fn: () => Promise<Job>, select = false) => {
     setActionErr(null)
@@ -77,7 +93,7 @@ export default function JobsPage() {
       <header className="page-head">
         <div className="grow">
           <h1>任务队列</h1>
-          <div className="lbl" style={{ marginTop: 4 }}>按优先级从高到低、提交时间从早到晚调度；任务只在单台服务器内分配卡</div>
+          <div className="lbl" style={{ marginTop: 4 }}>按优先级从高到低、提交时间从早到晚调度；任务只在单台服务器内分配卡；可被抢占的任务会给放不下的更高优先级任务让出卡</div>
         </div>
         <MockBadge show={mock} what="任务" />
         {schedMock ? <span className="lbl" title="后端暂未提供调度模式接口，由服务端环境变量 GNM_SCHEDULE_STRICT 配置">调度模式由服务端配置</span> : (
@@ -95,10 +111,12 @@ export default function JobsPage() {
       <div className="row wrap" style={{ gap: 6 }}>
         {TABS.map((t) => (
           <button key={t} type="button" className={tab === t ? 'chip on' : 'chip'} onClick={() => setTab(t)} aria-pressed={tab === t}>
-            {t === 'all' ? '全部' : JOB_LOOK[t].name} <span className="mono" style={{ opacity: 0.7, marginLeft: 2 }}>{t === 'all' ? all.length : all.filter((j) => j.status === t).length}</span>
+            {t === 'all' ? '全部' : JOB_LOOK[t].name} <span className="mono" style={{ opacity: 0.7, marginLeft: 2 }}>{t === 'all' ? filtered.length : filtered.filter((j) => j.status === t).length}</span>
           </button>
         ))}
         <span className="grow" />
+        <input className="inp" type="search" aria-label="搜索任务" placeholder="搜索名称/命令/提交人/#ID" value={search}
+          onChange={(e) => setSearch(e.target.value)} style={{ width: 220 }} />
         <select className="inp" aria-label="提交人" value={submitter} onChange={(e) => setSubmitter(e.target.value)}>
           <option value="">全部提交人</option>
           {submitters.map((s) => <option key={s}>{s}</option>)}
@@ -107,6 +125,16 @@ export default function JobsPage() {
           <option value="">全部运行组</option>
           {groups.map((g) => <option key={g}>{g}</option>)}
         </select>
+        <select className="inp" aria-label="运行服务器" value={server} onChange={(e) => setServer(e.target.value)}>
+          <option value="">全部服务器</option>
+          {serverNames.map((s) => <option key={s}>{s}</option>)}
+        </select>
+        <select className="inp" aria-label="是否可被抢占" value={preempt} onChange={(e) => setPreempt(e.target.value as '' | 'yes' | 'no')}>
+          <option value="">全部任务</option>
+          <option value="yes">可被抢占</option>
+          <option value="no">不可被抢占</option>
+        </select>
+        {filtering && <button type="button" className="btn sm" onClick={clearFilters}>清除筛选</button>}
       </div>
       <ErrorNote error={jobs.error || actionErr} />
 
@@ -125,7 +153,7 @@ export default function JobsPage() {
                     <td className="mono lbl">#{j.id}</td>
                     <td style={{ maxWidth: 220 }}>
                       <div className="ellipsis" style={{ fontWeight: 500 }}>{j.name}</div>
-                      <div className="lbl">{j.submitter ?? '-'}</div>
+                      <div className="lbl">{j.submitter ?? '-'}{j.preemptible ? ' · 可被抢占' : ''}</div>
                     </td>
                     <td><Badge bg={JOB_LOOK[j.status].bg} fg={JOB_LOOK[j.status].fg}>{JOB_LOOK[j.status].name}</Badge></td>
                     <td className="mono num">{j.num_devices}</td>
@@ -166,7 +194,7 @@ export default function JobsPage() {
               })}
             </tbody>
           </table>
-          {!jobs.loading && rows.length === 0 && <div className="empty">这个状态下没有任务</div>}
+          {!jobs.loading && rows.length === 0 && <div className="empty">{filtering ? '没有符合筛选条件的任务' : '这个状态下没有任务'}</div>}
         </section>
         {sel && <JobDetail key={sel.id} j={sel} />}
       </div>
@@ -227,6 +255,7 @@ function JobDetail({ j }: { j: Job }) {
         </div>
         <div className="lbl">
           {j.submitter ?? '-'} 提交 · {j.group ?? '不限运行组'}{j.accelerator ? ` · 仅 ${ACC_LOOK[j.accelerator].name}` : ''} · {j.num_devices} 卡 · 优先级 {j.priority}
+          {j.preemptible ? ` · 可被抢占${j.preempt_count ? `（已被抢占 ${j.preempt_count} 次）` : ''}` : ''}
           {j.requeued_from ? ` · 由 #${j.requeued_from} 重新排队` : ''}
         </div>
         {j.status === 'queued' && (
@@ -234,7 +263,7 @@ function JobDetail({ j }: { j: Job }) {
             队列第 {j.queue_position ?? '-'} 位{j.wait_reason ? `：${j.wait_reason}` : '，等待有足够空闲卡的服务器'}
           </div>
         )}
-        {j.error && <div className="notice err" style={{ marginTop: 6 }}>{j.error}</div>}
+        {j.error && <div className={j.status === 'queued' ? 'notice warn' : 'notice err'} style={{ marginTop: 6 }}>{j.error}</div>}
       </div>
       <div style={{ padding: '14px 18px', display: 'grid', gridTemplateColumns: '88px minmax(0, 1fr)', gap: '8px 12px', fontSize: 13, borderBottom: '1px solid var(--border-soft)' }}>
         <span className="lbl">命令</span><code className="mono" style={{ background: 'var(--bg)', padding: '6px 8px', borderRadius: 4, fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{j.command}</code>
@@ -282,6 +311,7 @@ function SubmitDrawer({ from, onClose, onSubmitted }: { from?: Job | null; onClo
   const [count, setCount] = useState(from?.num_devices ?? 1)
   const [serverId, setServerId] = useState(from?.server_id ? String(from.server_id) : '')
   const [priority, setPriority] = useState(String(from?.priority ?? 0))
+  const [preemptible, setPreemptible] = useState(from?.preemptible ?? false)
   const [submitter, setSubmitter] = useState(() => localStorage.getItem('gnm.submitter') ?? '')
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -314,7 +344,7 @@ function SubmitDrawer({ from, onClose, onSubmitted }: { from?: Job | null; onClo
       localStorage.setItem('gnm.submitter', submitter)
       onSubmitted(await jobsApi.create({
         name: name.trim() || null, command, workdir: workdir || null, env: envObj, num_devices: count, group: g || null, accelerator: acc || null,
-        server_id: serverId ? Number(serverId) : null, priority: Math.max(-100, Math.min(100, Number(priority) || 0)), submitter: submitter || null,
+        server_id: serverId ? Number(serverId) : null, priority: Math.max(-100, Math.min(100, Number(priority) || 0)), submitter: submitter || null, preemptible,
       }))
     } catch (e) {
       setErr(e instanceof ApiError ? e.detail : String(e))
@@ -364,6 +394,10 @@ function SubmitDrawer({ from, onClose, onSubmitted }: { from?: Job | null; onClo
           </label>
           <label className="field" style={{ width: 90 }}><span className="lbl">优先级</span><input className="inp mono" value={priority} onChange={(e) => setPriority(e.target.value)} inputMode="numeric" /></label>
         </div>
+        <label className="row" style={{ gap: 8, fontSize: 13, alignItems: 'flex-start' }}>
+          <input type="checkbox" checked={preemptible} onChange={(e) => setPreemptible(e.target.checked)} style={{ marginTop: 3 }} />
+          <span>可被抢占<span className="lbl" style={{ display: 'block' }}>运行中遇到放不下的更高优先级任务时，进程被终止、让出卡并重新排队；有空闲卡后自动重新运行（从头运行，需要断点续跑请在命令里自行加载检查点）</span></span>
+        </label>
         <div className={ok ? 'notice ok' : 'notice warn'}>
           <div style={{ fontWeight: 500 }}>{hint}</div>
           <div className="lbl" style={{ color: 'inherit', marginTop: 4 }}>{gName}可调度空闲卡：{inGroup.map((s) => `${s.name} ${schedulableIdle(s)}`).join('、') || '无'}</div>

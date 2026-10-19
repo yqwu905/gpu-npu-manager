@@ -192,6 +192,10 @@ export interface Job {
   server_id: number | null
   priority: number
   submitter: string | null
+  /** 可被抢占：遇到放不下的更高优先级任务时让出卡并重新排队，之后从头重新运行 */
+  preemptible: boolean
+  /** 被抢占的次数 */
+  preempt_count: number
   status: JobStatus
   /** 排队中的任务在队列中的位置，从 1 开始 */
   queue_position: number | null
@@ -225,6 +229,7 @@ export interface JobCreate {
   server_id?: number | null
   priority?: number
   submitter?: string | null
+  preemptible?: boolean
 }
 
 export interface JobQuery {
@@ -232,6 +237,7 @@ export interface JobQuery {
   group?: string
   submitter?: string
   server_id?: number
+  /** 关键字，匹配名称、命令和提交人；纯数字或 #数字 时也匹配任务 ID */
   q?: string
   limit?: number
   offset?: number

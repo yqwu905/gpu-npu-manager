@@ -36,8 +36,9 @@ class ClientGone(Exception):
     """浏览器已断开，不再继续处理。"""
 
 
-def agent_job_id(job_id: int) -> str:
-    return f"gnm-{job_id}"
+def agent_job_id(job_id: int, run: int = 0) -> str:
+    """Agent 上的任务 ID；被抢占后重新运行时用新的 ID，Agent 按 ID 幂等，不会返回上次被终止的记录。"""
+    return f"gnm-{job_id}-r{run}" if run else f"gnm-{job_id}"
 
 
 class Slot:
@@ -116,9 +117,9 @@ class AgentClient:
     async def health(self, host, port) -> dict:
         return await self._request("GET", host, port, "/v1/health")
 
-    async def start_job(self, host, port, job_id, command, workdir, env, devices) -> dict:
+    async def start_job(self, host, port, job_id, command, workdir, env, devices, run: int = 0) -> dict:
         body = {
-            "job_id": agent_job_id(job_id),
+            "job_id": agent_job_id(job_id, run),
             "command": command,
             "workdir": workdir,
             "env": env or {},
@@ -126,15 +127,15 @@ class AgentClient:
         }
         return await self._request("POST", host, port, "/v1/jobs", json=body)
 
-    async def get_job(self, host, port, job_id) -> dict:
-        return await self._request("GET", host, port, f"/v1/jobs/{agent_job_id(job_id)}")
+    async def get_job(self, host, port, job_id, run: int = 0) -> dict:
+        return await self._request("GET", host, port, f"/v1/jobs/{agent_job_id(job_id, run)}")
 
-    async def kill_job(self, host, port, job_id) -> dict:
-        return await self._request("POST", host, port, f"/v1/jobs/{agent_job_id(job_id)}/kill")
+    async def kill_job(self, host, port, job_id, run: int = 0) -> dict:
+        return await self._request("POST", host, port, f"/v1/jobs/{agent_job_id(job_id, run)}/kill")
 
-    async def read_log(self, host, port, job_id, offset: int, limit: int) -> dict:
+    async def read_log(self, host, port, job_id, offset: int, limit: int, run: int = 0) -> dict:
         return await self._request(
-            "GET", host, port, f"/v1/jobs/{agent_job_id(job_id)}/log", params={"offset": offset, "limit": limit}
+            "GET", host, port, f"/v1/jobs/{agent_job_id(job_id, run)}/log", params={"offset": offset, "limit": limit}
         )
 
     async def list_dir(self, host, port, path: str) -> dict:
