@@ -18,6 +18,8 @@ export const resultsApi = {
   create: (body: ResultSetCreate) => fb(() => request<ResultSet>('POST', '/results', { body }), () => mockResults.create(body)),
   update: (id: number, body: ResultSetUpdate) =>
     fb(() => request<ResultSet>('PATCH', `/results/${id}`, { body }), () => mockResults.update(id, body)),
+  /** 删除结果集登记和它的评测记录，服务器上的文件保留；有进行中的评测时不能删除 */
+  remove: (id: number) => fb(() => request<void>('DELETE', `/results/${id}`), () => mockResults.remove(id)),
   tags: () => fb(() => request<TagCount[]>('GET', '/results/tags'), () => mockResults.tags()),
   projects: () => fb(() => request<Project[]>('GET', '/projects'), () => mockResults.projects()),
   createProject: (body: { name: string; description?: string | null }) =>

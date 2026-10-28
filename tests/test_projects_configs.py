@@ -247,6 +247,37 @@ def test_lq_baseline_recompute_and_delete(env):
     assert client.delete("/api/evaluations/9999").status_code == 404
 
 
+def test_delete_result_set(env):
+    client, tmp_path, data, ids = env
+    config = client.post("/api/eval-configs", json={
+        "name": "sr-local", "metrics": ["psnr"], "gt_dir": str(data / "gt"), "lq_dir": str(data / "lq"),
+    }).json()
+    a, b = (client.post("/api/results", json={"server_id": ids["srv"], "path": str(data / name)}).json()
+            for name in ("model-a", "model-b"))
+
+    def evaluate(result):
+        ev = client.post("/api/evaluations", json={"result_set_id": result["id"], "config_id": config["id"]}).json()
+        run_until(client, lambda: client.get(f"/api/evaluations/{ev['id']}").json()["status"] in ("succeeded", "failed"))
+        return client.get(f"/api/evaluations/{ev['id']}").json()
+
+    base = evaluate(a)
+    reuse = evaluate(b)
+    assert base["compute_lq"] is True and reuse["lq_source_id"] == base["id"]
+
+    # 有进行中的评测时不能删除
+    pending = client.post("/api/evaluations", json={"result_set_id": a["id"], "metrics": ["psnr"]}).json()
+    assert client.delete(f"/api/results/{a['id']}").status_code == 409
+    run_until(client, lambda: client.get(f"/api/evaluations/{pending['id']}").json()["status"] in ("succeeded", "failed"))
+
+    # 删除结果集会一并删除它的评测记录；其他结果集引用它的 LQ 基线时改用同配置的其他基线，没有时置空
+    assert client.delete(f"/api/results/{a['id']}").status_code == 204
+    assert client.get(f"/api/results/{a['id']}").status_code == 404
+    assert [e["id"] for e in client.get("/api/evaluations").json()] == [reuse["id"]]
+    assert client.get(f"/api/evaluations/{reuse['id']}").json()["lq_source_id"] is None
+    assert (data / "model-a" / "eval" / str(base["id"])).is_dir()  # 服务器上的文件保留
+    assert client.delete(f"/api/results/{a['id']}").status_code == 404
+
+
 def test_copy_needs_ssh_on_result_server(env):
     client, tmp_path, data, ids = env
     result = client.post("/api/results", json={"server_id": ids["no-ssh"], "path": str(data / "model-a")}).json()

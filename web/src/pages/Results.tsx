@@ -234,7 +234,8 @@ export default function ResultsPage() {
       {evalFor && <EvalDialog r={evalFor} evaluators={evs} onClose={() => setEvalFor(null)}
         onDone={() => { setEvalFor(null); evals.reload(); sets.reload() }} />}
       {showReg && <RegisterDialog projects={projects.data ?? []} onClose={() => setShowReg(false)} onDone={(r) => { setShowReg(false); reloadAll(); setFocus(r.id) }} />}
-      {editFor && <EditDialog r={editFor} projects={projects.data ?? []} onClose={() => setEditFor(null)} onDone={() => { setEditFor(null); reloadAll() }} />}
+      {editFor && <EditDialog r={editFor} projects={projects.data ?? []} onClose={() => setEditFor(null)} onDone={() => { setEditFor(null); reloadAll() }}
+        onDeleted={() => { setSel(sel.filter((x) => x !== editFor.id)); if (focus === editFor.id) setFocus(null); setEditFor(null); reloadAll(); evals.reload() }} />}
       {showProjects && <ProjectsDialog onClose={() => { setShowProjects(false); reloadAll() }} />}
       {showConfigs && <ConfigsDialog evaluators={evs} onClose={() => setShowConfigs(false)} />}
     </main>
@@ -520,7 +521,7 @@ function RegisterDialog({ projects, onClose, onDone }: { projects: Project[]; on
   )
 }
 
-function EditDialog({ r, projects, onClose, onDone }: { r: ResultSet; projects: Project[]; onClose: () => void; onDone: () => void }) {
+function EditDialog({ r, projects, onClose, onDone, onDeleted }: { r: ResultSet; projects: Project[]; onClose: () => void; onDone: () => void; onDeleted: () => void }) {
   const [name, setName] = useState(r.name)
   const [note, setNote] = useState(r.note ?? '')
   const [project, setProject] = useState(r.project_id ? String(r.project_id) : '')
@@ -531,6 +532,16 @@ function EditDialog({ r, projects, onClose, onDone }: { r: ResultSet; projects: 
     try {
       await resultsApi.update(r.id, { name: name.trim(), note: note.trim() || null, project_id: project ? Number(project) : null, tags: parseTags(tagText) })
       onDone()
+    } catch (e) {
+      setErr(errText(e))
+    }
+  }
+  const remove = async () => {
+    if (!window.confirm(`删除结果集“${r.name}”的登记？它的评测记录会一并删除；其他结果集如果复用了这些评测的 LQ 基线，会改用同配置的其他基线。服务器上的结果文件和评测输出保留。`)) return
+    setErr(null)
+    try {
+      await resultsApi.remove(r.id)
+      onDeleted()
     } catch (e) {
       setErr(errText(e))
     }
@@ -546,6 +557,7 @@ function EditDialog({ r, projects, onClose, onDone }: { r: ResultSet; projects: 
         <label className="field"><span className="lbl">备注</span><input className="inp" value={note} onChange={(e) => setNote(e.target.value)} /></label>
         {err && <div className="notice err">{err}</div>}
         <div className="row" style={{ justifyContent: 'flex-end' }}>
+          <button type="button" className="btn danger" style={{ marginRight: 'auto' }} onClick={remove}>删除结果集</button>
           <button type="button" className="btn" onClick={onClose}>取消</button>
           <button type="submit" className="btn pri" disabled={!name.trim()}>保存</button>
         </div>
