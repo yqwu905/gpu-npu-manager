@@ -6,6 +6,9 @@ export interface Drawable { draw(): void }
 
 export interface ViewStore {
   get(): View
+  /** 平移按输入时的视口尺寸归一化，折叠面板后仍显示相同区域。 */
+  forSize(w: number, h: number): View
+  setForSize(v: View, w: number, h: number): void
   /** 立即更新视图（已按需夹紧），订阅者与格子在下一帧更新 */
   set(v: View | ((v: View) => View)): void
   /** 滚轮缩放：同一帧内的多次调用累积成一次，以最后一次的光标位置为中心 */
@@ -30,6 +33,7 @@ export function createViewStore(
   raf: (fn: () => void) => number = (fn) => requestAnimationFrame(fn),
   caf: (id: number) => void = (id) => cancelAnimationFrame(id),
 ): ViewStore {
+  let size: { w: number; h: number } | null = null
   let v = init
   let notified = v
   let frame = 0
@@ -46,7 +50,8 @@ export function createViewStore(
     if (wheel) {
       const p = wheel
       wheel = null
-      const n = zoomAt(v, p.f, p.cx, p.cy, p.w, p.h)
+      const n = zoomAt(store.forSize(p.w, p.h), p.f, p.cx, p.cy, p.w, p.h)
+      size = { w: p.w, h: p.h }
       if (n.z !== v.z || n.x !== v.x || n.y !== v.y) { v = n; markAll() }
     }
     if (v !== notified) {
@@ -60,6 +65,13 @@ export function createViewStore(
 
   const store: ViewStore = {
     get: () => v,
+    forSize(w, h) {
+      return size ? { z: v.z, x: v.x * w / size.w, y: v.y * h / size.h } : v
+    },
+    setForSize(next, w, h) {
+      size = { w, h }
+      store.set(next)
+    },
     set(next) {
       const n = typeof next === 'function' ? next(v) : next
       if (n.z === v.z && n.x === v.x && n.y === v.y) return

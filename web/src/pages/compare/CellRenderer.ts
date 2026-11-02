@@ -56,6 +56,7 @@ export interface CellRenderer {
   /** 结果集名称等文字变了，下一帧重写 */
   relabel(): void
   draw(): void
+  capture(): boolean
   dispose(): void
   /** 当前画面上的图，按住对比时对方读取 */
   pic(): Pic | null
@@ -366,8 +367,8 @@ export function createCellRenderer(els: CellEls, store: ViewStore, nameOf: (id: 
 
   /** 视图变化时记下时间，层级切换据此防抖 */
   function viewNow(): View {
-    const v = store.get()
-    if (v !== lastView) {
+    const v = store.forSize(cw, ch)
+    if (!lastView || v.z !== lastView.z || v.x !== lastView.x || v.y !== lastView.y) {
       if (lastView) lastMove = performance.now()
       lastView = v
     }
@@ -469,6 +470,12 @@ export function createCellRenderer(els: CellEls, store: ViewStore, nameOf: (id: 
     geom: () => (bw ? { cw, ch, dpr, pv: previewSize(cw, ch, dpr) } : null),
     relabel: () => changed(),
     draw,
+    capture() {
+      const wasVisible = visible
+      visible = true
+      try { settle(); draw(); return !cur || !busy(cur) }
+      finally { visible = wasVisible }
+    },
     pic: own,
     settled: () => !visible || !cur || !busy(cur),
     sync() {
