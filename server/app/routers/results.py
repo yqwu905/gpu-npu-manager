@@ -254,7 +254,21 @@ def update_result(result_id: int, body: ResultSetUpdate, session: Session = Depe
 
 @router.delete("/results/{result_id}", status_code=204, summary="删除结果集登记（不删除服务器上的文件）")
 def delete_result(result_id: int, request: Request, session: Session = Depends(get_session)):
-    session.delete(_load_result(session, result_id))
+    result = _load_result(session, result_id)
+    if any(e.status == "copying" for e in result.evaluations):
+        raise HTTPException(409, "有评测正在拷贝数据，请等拷贝结束后再删除")
+    if any(e.status in ("pending", "running") for e in result.evaluations):
+        raise HTTPException(409, "有评测还在进行，请先在任务队列中取消评测任务")
+    own = [e.id for e in result.evaluations]
+    users = list(session.scalars(
+        select(Evaluation).where(Evaluation.lq_source_id.in_(own), Evaluation.result_set_id != result_id)
+    )) if own else []
+    session.delete(result)
+    session.flush()
+    # 其他结果集的评测引用了这里评测的 LQ 基线时，改用同配置的其他基线
+    for user in users:
+        source = find_lq_baseline(session, user)
+        user.lq_source_id = source.id if source is not None else None
     session.commit()
     request.app.state.media_targets.clear()
     return Response(status_code=204)
