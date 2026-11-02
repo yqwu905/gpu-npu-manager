@@ -13,7 +13,7 @@ import { join } from 'node:path'
 
 process.env.PLAYWRIGHT_BROWSERS_PATH ??= '/opt/pw-browsers'
 const require = createRequire(import.meta.url)
-const { chromium } = require(join(execSync('npm root -g').toString().trim(), 'playwright'))
+const { chromium } = require(process.env.PLAYWRIGHT_MODULE || join(execSync('npm root -g').toString().trim(), 'playwright'))
 const BASE = process.argv[2] ?? 'http://localhost:5180/ui/'
 const OUT = process.env.OUT_DIR ?? tmpdir()
 
@@ -30,7 +30,7 @@ function editDistance(a, b) {
 const naive = (q, names) => names.reduce((best, f, k) => (editDistance(q, f) < editDistance(q, names[best]) ? k : best), 0)
 const mockNames = (n) => Array.from({ length: n }, (_, i) => `${String(i).padStart(4, '0')}.png`)
 
-const browser = await chromium.launch({ args: ['--force-color-profile=srgb'] })
+const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH, args: ['--force-color-profile=srgb'] })
 const page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 1 })
 if (process.env.NO_ROUTE !== '1') await page.route((u) => u.pathname.startsWith('/api/'), (r) => r.fulfill({ status: 404, contentType: 'application/json', body: '{"detail":"Not Found"}' }))
 // 页面里按应用实际加载的地址导入模块（开发服务器改过的文件带 ?t=，直接写路径会得到另一份模块实例）
@@ -133,6 +133,7 @@ try {
   step('按住切换：画面换成对方的当前图，不发请求')
   const before = await perf()
   const holdBtn = cells.nth(0).getByRole('button', { name: '按住查看 sr-x4-v2-perceptual 的当前图' })
+  await cells.nth(0).locator('.cmp-vp').hover()
   await holdBtn.hover()
   await page.mouse.down()
   await page.getByText('正在显示 sr-x4-v2-perceptual').waitFor()
@@ -145,12 +146,10 @@ try {
   const afterHold = await perf()
   assert.equal(afterHold.lanes.main.started, before.lanes.main.started)
 
-  step('Ctrl+滚轮缩放：无损瓦片，缩放期间没有 React 提交')
+  step('滚轮缩放：无损瓦片，缩放期间没有 React 提交')
   const vp = await cells.nth(0).locator('.cmp-vp').boundingBox()
   await page.mouse.move(vp.x + vp.width * 0.4, vp.y + vp.height * 0.45)
-  await page.keyboard.down('Control')
   for (let k = 0; k < 4; k++) { await page.mouse.wheel(0, -300); await page.waitForTimeout(16) }
-  await page.keyboard.up('Control')
   assert.notEqual(await page.locator('.mono', { hasText: /^\d+%$/ }).first().textContent(), '100%')
   await allTier('lossless')
   const z1 = await perf()
@@ -159,9 +158,7 @@ try {
   await shot('04-zoom')
 
   step('放大到 1600%：画布中心是原图像素（无插值）')
-  await page.keyboard.down('Control')
   for (let k = 0; k < 6; k++) { await page.mouse.wheel(0, -400); await page.waitForTimeout(16) }
-  await page.keyboard.up('Control')
   await until(async () => (await page.getByText('1600%').count()) === 1, '1600%')
   await allTier('lossless')
   assert.equal(await cells.nth(0).locator('canvas').getAttribute('data-level'), '0')
@@ -185,9 +182,7 @@ try {
 
   const zoomIn = async () => {
     await page.mouse.move(vp.x + vp.width / 2, vp.y + vp.height / 2)
-    await page.keyboard.down('Control')
     for (let k = 0; k < 4; k++) { await page.mouse.wheel(0, -300); await page.waitForTimeout(16) }
-    await page.keyboard.up('Control')
     await until(async () => (await page.getByText('100%', { exact: true }).count()) === 0, '已放大')
   }
   const fitted = async (what) => {
@@ -198,6 +193,7 @@ try {
   step('放大状态下换图：自动回到 100%，再按住切换')
   await page.keyboard.press('ArrowRight')
   await fitted('方向键换图后回到 100%')
+  await cells.nth(1).locator('.cmp-vp').hover()
   await cells.nth(1).getByRole('button', { name: '按住查看 sr-x4-baseline 的当前图' }).hover()
   await page.mouse.down()
   assert.ok(await samePixels(1, 0))

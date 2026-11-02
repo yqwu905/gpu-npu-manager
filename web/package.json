@@ -9,6 +9,7 @@
     "typecheck": "tsc -b",
     "test": "node --test 'src/**/*.test.ts'",
     "e2e": "node e2e/compare-mock.mjs",
+    "e2e:interactions": "node e2e/compare-interactions.mjs",
     "e2e:perf": "node e2e/compare-perf.mjs",
     "preview": "vite preview"
   },

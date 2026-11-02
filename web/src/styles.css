@@ -161,10 +161,11 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .cmp-vbody { position: absolute; left: 0; top: 0; width: 100%; }
 .cmp-vrow { position: absolute; left: 0; height: 112px; display: grid; grid-template-columns: repeat(var(--cols), 112px); gap: 8px; padding: 0 8px; align-items: start; }
 .cmp-vrow .cmp-thumb { height: 106px; overflow: hidden; }
+.cmp-grid { grid-auto-rows: max-content; align-items: start; }
 .cmp-cell { margin: 0; display: flex; flex-direction: column; overflow: hidden; }
 .cmp-name-btn { display: flex; align-items: center; gap: 7px; min-width: 0; height: 28px; padding: 0 6px; margin-left: -6px; border: 0; border-radius: 5px; background: transparent; font: inherit; color: var(--ink); cursor: pointer; }
 .cmp-name-btn:hover { background: var(--bg); }
-.cmp-vp { position: relative; aspect-ratio: 4 / 3; overflow: hidden; background: var(--track); touch-action: none; }
+.cmp-vp { flex-shrink: 0; position: relative; aspect-ratio: 4 / 3; overflow: hidden; background: var(--track); touch-action: none; }
 /* 画布铺满视口；格子尺寸变化的过渡期间只被 CSS 拉伸，停下后才按设备像素重新分配 */
 .cmp-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .cmp-grid[data-zoomed] .cmp-vp { cursor: grab; }
@@ -175,6 +176,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .cmp-ph[hidden], .cmp-tier[hidden], .cmp-holding[hidden] { display: none; }
 .cmp-holding { position: absolute; left: 10px; top: 10px; display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 13px; background: rgba(21, 24, 28, 0.86); color: #FFFFFF; font-size: 12px; }
 .cmp-hold-btns { position: absolute; right: 8px; bottom: 8px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; max-width: calc(100% - 16px); }
+.cmp-hold-btns { opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
+.cmp-vp:hover .cmp-hold-btns, .cmp-hold-btns:has(:focus-visible) { opacity: 1; pointer-events: auto; }
 .cmp-hold { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px 0 8px; border: 1px solid rgba(255, 255, 255, 0.5); border-radius: 15px; background: rgba(21, 24, 28, 0.62); color: #FFFFFF; font: inherit; font-size: 12px; cursor: pointer; user-select: none; touch-action: none; }
 .cmp-hold.on { background: rgba(21, 24, 28, 0.95); }
 .kbd { font-family: var(--mono); font-size: 11px; padding: 2px 6px; border: 1px solid var(--control); border-bottom-width: 2px; border-radius: 4px; background: var(--bg); color: var(--ink); }

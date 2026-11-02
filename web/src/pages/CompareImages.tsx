@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { resultsApi } from '../api/results'
 import { bitmaps } from './compare/bitmapCache.ts'
 import type { CellRenderer } from './compare/CellRenderer.ts'
-import { zoomAt, type View } from './compare/geometry.ts'
+import type { View } from './compare/geometry.ts'
 import ImageCell, { type Peer } from './compare/ImageCell'
 import { remapIndex, useImageIndexes, type ImageIndex, type IndexState } from './compare/imageIndex.ts'
 import { PRIO, loader } from './compare/loader.ts'
@@ -32,6 +32,9 @@ interface Props {
  */
 function CompareImages({ ids, nameOf, colorOf }: Props) {
   perf.render('compareImages')
+  const [aliases, setAliases] = useState<Record<number, string>>({})
+  const displayName = useCallback((id: number) => aliases[id] || nameOf(id), [aliases, nameOf])
+  const [copying, setCopying] = useState(false)
   const [cur, setCur] = useState<Record<number, number>>({})
   const [focusPick, setFocus] = useState<number | null>(null)
   const [status, setStatus] = useState('')
@@ -65,7 +68,7 @@ function CompareImages({ ids, nameOf, colorOf }: Props) {
     const g = geom()
     if (!g) { pf.main.clear(); return }
     const sets = ids.flatMap((id) => { const ix = states[id]?.ix; return ix?.n ? [{ ix, i: clampIdx(cur[id], ix.n) }] : [] })
-    const v = store.get()
+    const v = store.forSize(g.cw, g.ch)
     // 放大时下一张的无损层等各格当前图都加载完再取，免得和眼前的视图抢服务端解码（格子加载完会回调这里）
     const zoom = v.z > 1 && [...cells.values()].every((c) => c.settled()) ? { v, cw: g.cw, ch: g.ch, dpr: g.dpr } : undefined
     // 只有 pin 住的位图淘汰不掉；没 pin 的缓存放得下新的预取，满了就按 LRU 淘汰
@@ -161,8 +164,6 @@ function CompareImages({ ids, nameOf, colorOf }: Props) {
     if (!el) return
     const vpOf = (t: EventTarget | null) => (t as HTMLElement | null)?.closest?.<HTMLElement>('[data-viewport]') ?? null
     const onWheel = (e: WheelEvent) => {
-      // Mac 触控板双指捏合以 ctrlKey=true 的滚轮事件送达，一并当作缩放
-      if (!isMod(e) && !(IS_MAC && e.ctrlKey)) return
       const vp = vpOf(e.target)
       if (!vp) return
       e.preventDefault()
@@ -176,11 +177,11 @@ function CompareImages({ ids, nameOf, colorOf }: Props) {
       e.preventDefault()
       vp.setPointerCapture(e.pointerId)
       const r = vp.getBoundingClientRect()
-      drag = { id: e.pointerId, x: e.clientX, y: e.clientY, v: store.get(), w: r.width, h: r.height }
+      drag = { id: e.pointerId, x: e.clientX, y: e.clientY, v: store.forSize(r.width, r.height), w: r.width, h: r.height }
       el.dataset.drag = '1'
     }
     const onMove = (e: PointerEvent) => {
-      if (drag && e.pointerId === drag.id) store.set(panFrom(drag.v, e.clientX - drag.x, e.clientY - drag.y, drag.w, drag.h))
+      if (drag && e.pointerId === drag.id) store.setForSize(panFrom(drag.v, e.clientX - drag.x, e.clientY - drag.y, drag.w, drag.h), drag.w, drag.h)
     }
     const onUp = (e: PointerEvent) => {
       if (!drag || e.pointerId !== drag.id) return
@@ -220,7 +221,58 @@ function CompareImages({ ids, nameOf, colorOf }: Props) {
   const zoomBy = (factor: number) => {
     const r = gridRef.current?.querySelector('[data-viewport]')?.getBoundingClientRect()
     if (!r) return
-    store.set((v) => zoomAt(v, factor, r.width / 2, r.height / 2, r.width, r.height))
+    store.zoom(factor, r.width / 2, r.height / 2, r.width, r.height)
+  }
+
+  const copyGrid = async () => {
+    const grid = gridRef.current
+    if (!grid) return
+    setCopying(true)
+    try {
+      if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') throw new Error('当前浏览器不支持复制图片，请使用 HTTPS 或 localhost')
+      // 在点击事件内开始剪贴板写入，兼容需要用户手势的浏览器。
+      const png = (async () => {
+        store.flush()
+        const deadline = performance.now() + 15000
+        while (true) {
+          const ready = [...cells.values()].map((cell) => cell.capture()).every(Boolean)
+          if (ready) break
+          if (performance.now() > deadline) throw new Error('图片仍在加载，请稍后重试')
+          await new Promise((resolve) => setTimeout(resolve, 50))
+        }
+        const figures = [...grid.querySelectorAll<HTMLElement>('.cmp-cell')]
+        const rects = figures.map((f) => f.getBoundingClientRect())
+        const left = Math.min(...rects.map((r) => r.left)), top = Math.min(...rects.map((r) => r.top))
+        const scale = window.devicePixelRatio || 1
+        const out = document.createElement('canvas')
+        out.width = Math.ceil((Math.max(...rects.map((r) => r.right)) - left) * scale)
+        out.height = Math.ceil((Math.max(...rects.map((r) => r.bottom)) - top) * scale)
+        const ctx = out.getContext('2d')!
+        ctx.scale(scale, scale)
+        ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, out.width / scale, out.height / scale)
+        figures.forEach((f, k) => {
+          const r = rects[k], canvas = f.querySelector('canvas')!, vp = canvas.getBoundingClientRect()
+          const id = Number(f.dataset.id)
+          ctx.fillStyle = colorOf(id); ctx.fillRect(r.left - left, r.top - top, r.width, 3)
+          ctx.save(); ctx.beginPath(); ctx.rect(r.left - left + 10, r.top - top + 3, r.width - 20, vp.top - r.top - 3); ctx.clip()
+          ctx.fillStyle = '#15181c'; ctx.font = '500 13px sans-serif'
+          ctx.fillText(displayName(id), r.left - left + 10, r.top - top + 25)
+          ctx.restore()
+          ctx.fillStyle = '#e6e8e3'; ctx.fillRect(vp.left - left, vp.top - top, vp.width, vp.height)
+          ctx.drawImage(canvas, vp.left - left, vp.top - top, vp.width, vp.height)
+          ctx.save(); ctx.beginPath(); ctx.rect(r.left - left, vp.bottom - top, r.width, r.bottom - vp.bottom); ctx.clip()
+          ctx.fillStyle = '#555'; ctx.font = '12px sans-serif'
+          ctx.fillText(f.querySelector('.mono.ellipsis.grow')?.textContent || '', r.left - left + 10, vp.bottom - top + 21)
+          ctx.restore()
+        })
+        return new Promise<Blob>((resolve, reject) => {
+          out.toBlob((blob) => blob ? resolve(blob) : reject(new Error('生成图片失败')), 'image/png')
+        })
+      })()
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })])
+      setStatus('对比图已复制')
+    } catch (e) { setStatus(`复制失败：${e instanceof Error ? e.message : String(e)}`) }
+    finally { setCopying(false) }
   }
 
   const n = ids.length
@@ -239,7 +291,7 @@ function CompareImages({ ids, nameOf, colorOf }: Props) {
           <span className="row" style={{ gap: 6 }}><kbd className="kbd">单击</kbd>仅切换该结果</span>
           <span className="row" style={{ gap: 6 }}><kbd className="kbd">{MOD_KEY} + 单击</kbd>按序号同步全部结果</span>
           <span className="row" style={{ gap: 6 }}><kbd className="kbd">Alt + 单击</kbd>按文件名编辑距离匹配</span>
-          <span className="row" style={{ gap: 6 }}><kbd className="kbd">{MOD_KEY} + 滚轮</kbd>同步缩放</span>
+          <span className="row" style={{ gap: 6 }}><kbd className="kbd">滚轮</kbd>同步缩放</span>
           <span className="row" style={{ gap: 6 }}><kbd className="kbd">拖动</kbd>同步平移</span>
           <span className="grow" />
           <span role="status" className="mono" style={{ color: 'var(--ink)' }}>{status || '点击缩略图切换图片'}</span>
@@ -256,6 +308,7 @@ function CompareImages({ ids, nameOf, colorOf }: Props) {
           <span ref={zoomRef} className="mono" style={{ minWidth: 52, textAlign: 'center', fontSize: 13 }}>100%</span>
           <button type="button" className="btn sm" onClick={() => zoomBy(1.5)} aria-label="放大">＋</button>
           <button type="button" className="btn sm" onClick={() => store.reset()}>适应窗口</button>
+          <button type="button" className="btn sm" disabled={!n || copying} onClick={copyGrid}>{copying ? '复制中…' : '复制对比图'}</button>
         </div>
 
         {n === 0 && <div className="card empty">在左侧勾选至少一个推理结果</div>}
@@ -266,7 +319,7 @@ function CompareImages({ ids, nameOf, colorOf }: Props) {
             const i = ix?.n ? clampIdx(cur[id], ix.n) : 0
             const own = ix?.n ? serialOf(ix.names[i]) : ''
             return (
-              <ImageCell key={id} id={id} name={nameOf(id)} color={colorOf(id)} focus={id === focus}
+              <ImageCell key={id} id={id} name={displayName(id)} onRename={(value) => setAliases((a) => ({ ...a, [id]: value.trim() }))} color={colorOf(id)} focus={id === focus}
                 mismatch={!!focusSerial && own !== '' && own !== focusSerial}
                 count={ix?.n ? `${i + 1} / ${ix.n}` : st.loading ? '加载中' : '无图片'}
                 ix={ix} i={i} peers={peers.get(id)!} store={store} cells={cells} nameOf={nameOf} onFocus={setFocus} onPrefetch={refreshPrefetch} />

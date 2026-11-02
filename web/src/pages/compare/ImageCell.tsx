@@ -1,5 +1,5 @@
 // 对比格子：React 只负责标题栏与按钮，画布、文件名、角标和“正在显示”都由 CellRenderer 直接改写，换图、缩放、按住对比都不重渲染
-import { memo, useEffect, useLayoutEffect, useRef, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { createCellRenderer, type CellRenderer } from './CellRenderer.ts'
 import type { ImageIndex } from './imageIndex.ts'
 import { perf } from './perf.ts'
@@ -10,6 +10,7 @@ export interface Peer { id: number; name: string; color: string }
 interface Props {
   id: number
   name: string
+  onRename: (value: string) => void
   color: string
   focus: boolean
   mismatch: boolean
@@ -28,8 +29,10 @@ interface Props {
   onPrefetch?: () => void
 }
 
-function ImageCell({ id, name, color, focus, mismatch, count, ix, i, peers, store, cells, nameOf, onFocus, onPrefetch }: Props) {
+function ImageCell({ id, name, onRename, color, focus, mismatch, count, ix, i, peers, store, cells, nameOf, onFocus, onPrefetch }: Props) {
   perf.render('cell')
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
   const vp = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
   const fileEl = useRef<HTMLSpanElement>(null)
@@ -94,6 +97,16 @@ function ImageCell({ id, name, color, focus, mismatch, count, ix, i, peers, stor
           <span className="dot" style={{ width: 10, height: 10, background: color }} />
           <span className="mono ellipsis" style={{ fontSize: 13, fontWeight: 500 }}>{name}</span>
         </button>
+        {editing ? <input className="inp" autoFocus aria-label="图片显示名称" value={draft}
+          style={{ minWidth: 0, width: 150, height: 28 }}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => { onRename(draft); setEditing(false) }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { onRename(draft); setEditing(false) }
+            if (e.key === 'Escape') { setEditing(false) }
+          }} /> : <button type="button" className="cmp-icon-btn" style={{ fontSize: 14, flexShrink: 0 }}
+          aria-label={`修改 ${name} 的显示名称`} title="仅修改图片上方的显示名称"
+          onClick={() => { setDraft(name); setEditing(true) }}>✎</button>}
         <span className="grow" />
         {mismatch && <span className="badge" style={{ background: '#FFF4D6', color: '#5C3F00' }}>编号不一致</span>}
         <span className="mono lbl">{count}</span>
