@@ -74,9 +74,17 @@ try {
   }
   console.log('PASS wheel without Ctrl, pan, fold/unfold both panels preserving range')
 
-  // The last cell is below the scroll viewport; switch images before copying.
+  // The entire grid must fit even in a short window.
   await page.setViewportSize({ width: 1600, height: 600 })
   await page.waitForTimeout(400)
+  assert.ok(await page.locator('.cmp-grid').evaluate((grid) => {
+    const r = grid.getBoundingClientRect()
+    return grid.scrollHeight <= grid.clientHeight + 1 && [...grid.querySelectorAll('.cmp-cell')].every((cell) => {
+      const c = cell.getBoundingClientRect()
+      return c.top >= r.top - 1 && c.bottom <= r.bottom + 1 && c.bottom <= innerHeight
+    })
+  }), 'all three cells must fit without scrolling')
+  console.log('PASS full grid fits short viewport without scrolling')
   await page.keyboard.press('ArrowRight')
   await page.getByRole('button', { name: '复制对比图', exact: true }).click()
   await wait(async () => /已复制|复制失败/.test(await status.textContent()))
@@ -97,8 +105,24 @@ try {
     return { type: blob.type, width: image.width, height: image.height, matching }
   })
   assert.ok(await cells.evaluateAll((fs) => fs.every((f) => f.querySelector('canvas').dataset.pic === f.dataset.pic)))
-  assert.equal(png.type, 'image/png'); assert.ok(png.width > 500 && png.height > 500)
+  assert.equal(png.type, 'image/png'); assert.ok(png.width > 500 && png.height > 200)
   assert.ok(png.matching.every(Boolean), JSON.stringify(png))
+  for (const [width, height] of [[1600, 1000], [1280, 720], [1600, 600]]) {
+    await page.setViewportSize({ width, height })
+    for (const ids of ['1', '1,2,3', '1,2,3,4,5,6']) {
+      await page.goto((process.argv[2] || 'http://127.0.0.1:5180/ui/') + '#/compare?ids=' + ids)
+      await wait(async () => await cells.count() === ids.split(',').length)
+      await page.waitForTimeout(400)
+      assert.ok(await page.locator('.cmp-grid').evaluate((grid) => {
+        const r = grid.getBoundingClientRect()
+        return grid.scrollHeight <= grid.clientHeight + 1 && [...grid.querySelectorAll('.cmp-cell')].every((cell) => {
+          const c = cell.getBoundingClientRect(), vp = cell.querySelector('.cmp-vp').getBoundingClientRect()
+          return c.bottom <= r.bottom + 1 && c.bottom <= innerHeight && vp.width > 0 && vp.height > 0 && vp.top >= c.top && vp.bottom <= c.bottom
+        })
+      }), `grid must fit ${width}x${height}, ids=${ids}`)
+    }
+  }
+  console.log('PASS 1/3/6 cells fit 1600x1000, 1280x720 and 1600x600')
   assert.deepEqual(errors, [])
   console.log('PASS real clipboard PNG includes all 3 cells:', JSON.stringify(png))
   await page.screenshot({ path: process.env.SCREENSHOT_PATH || '/tmp/compare-interactions.png' })

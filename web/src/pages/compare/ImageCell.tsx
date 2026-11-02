@@ -111,30 +111,32 @@ function ImageCell({ id, name, onRename, color, focus, mismatch, count, ix, i, p
         {mismatch && <span className="badge" style={{ background: '#FFF4D6', color: '#5C3F00' }}>编号不一致</span>}
         <span className="mono lbl">{count}</span>
       </figcaption>
-      <div ref={vp} data-viewport="1" className="cmp-vp">
-        <canvas ref={canvas} className="cmp-canvas" role="img" />
-        <div ref={ph} className="cmp-ph mono" hidden />
-        <div className="cmp-badges">
-          <span ref={tier} className="badge cmp-tier" hidden />
-          <span ref={flag} className="badge cmp-tier" hidden>已归一化</span>
-        </div>
-        <div ref={holding} className="cmp-holding" hidden>
-          <span ref={holdDot} className="dot" />
-          正在显示 <span ref={holdName} />
-        </div>
-        <div ref={btns} className="cmp-hold-btns">
-          {peers.map((o) => (
-            <button key={o.id} type="button" className="cmp-hold"
-              onPointerDown={(e) => holdOn(o, e.currentTarget)} onPointerUp={holdOff} onPointerLeave={holdOff}
-              onKeyDown={holdKey(o)} onKeyUp={holdOff} onBlur={holdOff}
-              aria-label={`按住查看 ${o.name} 的当前图`}>
-              <span className="dot" style={{ width: 10, height: 10, background: o.color, boxShadow: '0 0 0 1.5px #FFFFFF' }} />
-              <span className="ellipsis" style={{ maxWidth: 120 }}>{o.name}</span>
-            </button>
-          ))}
+      <div className="cmp-image-area">
+        <div ref={vp} data-viewport="1" className="cmp-vp">
+          <canvas ref={canvas} className="cmp-canvas" role="img" />
+          <div ref={ph} className="cmp-ph mono" hidden />
+          <div className="cmp-badges">
+            <span ref={tier} className="badge cmp-tier" hidden />
+            <span ref={flag} className="badge cmp-tier" hidden>已归一化</span>
+          </div>
+          <div ref={holding} className="cmp-holding" hidden>
+            <span ref={holdDot} className="dot" />
+            正在显示 <span ref={holdName} />
+          </div>
+          <div ref={btns} className="cmp-hold-btns">
+            {peers.map((o) => (
+              <button key={o.id} type="button" className="cmp-hold"
+                onPointerDown={(e) => holdOn(o, e.currentTarget)} onPointerUp={holdOff} onPointerLeave={holdOff}
+                onKeyDown={holdKey(o)} onKeyUp={holdOff} onBlur={holdOff}
+                aria-label={`按住查看 ${o.name} 的当前图`}>
+                <span className="dot" style={{ width: 10, height: 10, background: o.color, boxShadow: '0 0 0 1.5px #FFFFFF' }} />
+                <span className="ellipsis" style={{ maxWidth: 120 }}>{o.name}</span>
+              </button>
+            ))}
+          </div>
         </div>
       </div>
-      <div className="row" style={{ gap: 8, padding: '8px 10px' }}>
+      <div className="row cmp-cell-footer" style={{ gap: 8, padding: '8px 10px' }}>
         <span ref={fileEl} className="mono ellipsis grow" style={{ fontSize: 12 }} />
         {peers.length > 0 && <span className="lbl" style={{ whiteSpace: 'nowrap' }}>按住右下角按钮切换</span>}
       </div>
