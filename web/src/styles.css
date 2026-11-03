@@ -161,11 +161,13 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .cmp-vbody { position: absolute; left: 0; top: 0; width: 100%; }
 .cmp-vrow { position: absolute; left: 0; height: 112px; display: grid; grid-template-columns: repeat(var(--cols), 112px); gap: 8px; padding: 0 8px; align-items: start; }
 .cmp-vrow .cmp-thumb { height: 106px; overflow: hidden; }
-.cmp-grid { grid-auto-rows: max-content; align-items: start; }
-.cmp-cell { margin: 0; display: flex; flex-direction: column; overflow: hidden; }
+.cmp-grid { align-items: stretch; }
+.cmp-cell { min-width: 0; min-height: 0; margin: 0; display: flex; flex-direction: column; overflow: hidden; }
 .cmp-name-btn { display: flex; align-items: center; gap: 7px; min-width: 0; height: 28px; padding: 0 6px; margin-left: -6px; border: 0; border-radius: 5px; background: transparent; font: inherit; color: var(--ink); cursor: pointer; }
 .cmp-name-btn:hover { background: var(--bg); }
-.cmp-vp { flex-shrink: 0; position: relative; aspect-ratio: 4 / 3; overflow: hidden; background: var(--track); touch-action: none; }
+.cmp-cell > figcaption, .cmp-cell-footer { flex-shrink: 0; }
+.cmp-image-area { position: relative; flex: 1 1 0; min-height: 0; container-type: size; background: var(--track); }
+.cmp-vp { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(100cqw, 133.333333cqh); height: min(100cqh, 75cqw); overflow: hidden; background: var(--track); touch-action: none; }
 /* 画布铺满视口；格子尺寸变化的过渡期间只被 CSS 拉伸，停下后才按设备像素重新分配 */
 .cmp-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .cmp-grid[data-zoomed] .cmp-vp { cursor: grab; }

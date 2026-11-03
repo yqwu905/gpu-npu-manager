@@ -313,7 +313,7 @@ function CompareImages({ ids, nameOf, colorOf }: Props) {
 
         {n === 0 && <div className="card empty">在左侧勾选至少一个推理结果</div>}
 
-        <div ref={gridRef} className="cmp-grid" style={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', display: 'grid', gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))`, gap: 10, alignContent: 'start' }}>
+        <div ref={gridRef} className="cmp-grid" style={{ flex: '1 1 0', minHeight: 0, overflow: 'hidden', display: 'grid', gridTemplateRows: `repeat(${Math.max(1, Math.ceil(n / gridCols))}, minmax(0, 1fr))`, gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))`, gap: 10 }}>
           {ids.map((id) => {
             const st = states[id] ?? LOADING, ix = st.ix
             const i = ix?.n ? clampIdx(cur[id], ix.n) : 0

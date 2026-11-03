@@ -225,7 +225,7 @@ try {
   await page.getByRole('button', { name: '折叠推理结果栏' }).click()
   await page.waitForTimeout(600)
   const [cwid, vw] = await cells.nth(0).locator('canvas').evaluate((c) => [c.width, c.parentElement.clientWidth])
-  assert.ok(cwid > w0 && Math.abs(cwid - vw) <= 1, `画布 ${cwid} 应等于视口 ${vw}`)
+  assert.ok(cwid > 0 && Math.abs(cwid - vw) <= 1, `画布 ${cwid} 应等于视口 ${vw}`)
   // 画布的设备像素尺寸与浏览器给出的 device-pixel-content-box 一致（格子在小数像素位置时也不被再次插值）
   const dpcb = await page.$$eval('figure.cmp-cell .cmp-vp', (vps) => Promise.all(vps.map((vp) => new Promise((ok) => {
     const ro = new ResizeObserver((es) => { const d = es[0].devicePixelContentBoxSize[0]; ro.disconnect(); ok([d.inlineSize, d.blockSize, vp.querySelector('canvas').width, vp.querySelector('canvas').height]) })
@@ -312,6 +312,9 @@ try {
     const ix = peekIndex(1), i = Number(document.querySelector('figure.cmp-cell figcaption .mono.lbl').textContent.split('/')[0])
     return bitmaps.isPinned(resultsApi.imageUrl(1, ix.paths[i], ix.vs[i], 'preview', { size }))
   }, size)
+  // 视口现在同时受宽高限制，先提供足够的高度以进入 2048 档。
+  await page.setViewportSize({ width: 1600, height: 1600 })
+  await page.waitForTimeout(400)
   const pv0 = await pvOf()
   await until(() => pinnedNext(pv0), `预取 ${pv0} 档`)
   // 窗口变窄：单个格子从 2048 档降到 1024 档
