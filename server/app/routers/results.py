@@ -27,11 +27,15 @@ from .eval_configs import check_eval_server, normalize_paths
 from ..schemas import (
     CompareResultSet,
     EvaluationCreate,
+    EvaluationOptions,
     EvaluationOut,
+    EvaluationStatus,
     EvaluatorOut,
     ImageList,
     LqSetOut,
     MetricCompare,
+    ProjectEvaluationCreate,
+    ProjectEvaluationOut,
     ResultSetCreate,
     ResultSetOut,
     ResultSetUpdate,
@@ -531,7 +535,7 @@ def _load_evaluation(session: Session, evaluation_id: int) -> Evaluation:
 CONFIG_FIELDS = ("metrics", "label_file", "gt_dir", "lq_dir", "server_id", "server_path", "num_devices", "python")
 
 
-def _evaluation_fields(session: Session, body: EvaluationCreate) -> dict:
+def _evaluation_fields(session: Session, body: EvaluationOptions) -> dict:
     """评测参数：先取评测配置中的值，再用请求里给出的字段覆盖。"""
     fields: dict = {"config_id": body.config_id}
     if body.config_id is not None:
@@ -552,7 +556,51 @@ def _evaluation_fields(session: Session, body: EvaluationCreate) -> dict:
     return fields
 
 
-@router.post("/evaluations", response_model=EvaluationOut, status_code=201, summary="对结果集发起评测")
+def _prepare_evaluation(
+    session: Session, result: ResultSet, body: EvaluationOptions, fields: dict, settings: Settings,
+) -> Evaluation:
+    """在当前事务中创建评测和任务；跨服务器拷贝由调用方在提交后启动。"""
+    server = session.get(Server, fields["server_id"]) if fields.get("server_id") is not None else None
+    copy = server is not None and server.id != result.server_id
+    if copy and ssh_target(result.server) is None:
+        raise HTTPException(
+            422, f"结果所在服务器 {result.server.name} 没有填写 SSH 用户，无法把数据拷贝到评测服务器"
+        )
+    evaluation = Evaluation(
+        result_set=result,
+        metrics=fields["metrics"],
+        reference=fields["reference"],
+        config_id=fields["config_id"],
+        label_file=fields.get("label_file"),
+        gt_dir=fields.get("gt_dir"),
+        lq_dir=fields.get("lq_dir"),
+        python=fields.get("python"),
+        server=server if copy else None,
+        status="copying" if copy else "pending",
+        output_dir="",
+    )
+    session.add(evaluation)
+    session.flush()
+    if copy:
+        evaluation.data_path = posixpath.join(fields["server_path"], f"result_{result.id}")
+    base = evaluation.data_path or result.path
+    evaluation.output_dir = posixpath.join(base, "eval", str(evaluation.id))
+    if evaluation.lq_dir:
+        source = None if body.recompute_lq else find_lq_baseline(session, evaluation)
+        evaluation.lq_source_id = source.id if source is not None else None
+        evaluation.compute_lq = source is None
+    if not copy:
+        job = evaluation_job(settings, result, evaluation, fields["num_devices"], body.priority, body.submitter)
+        session.add(job)
+        session.flush()
+        evaluation.job_id = job.id
+    return evaluation
+
+
+@router.post(
+    "/evaluations", response_model=EvaluationOut, status_code=201, summary="对结果集发起评测",
+    description="异步提交评测。使用 config_id 或显式 metrics；返回后按 id 查询评测状态，201 表示已创建。",
+)
 async def create_evaluation(
     body: EvaluationCreate,
     request: Request,
@@ -561,41 +609,8 @@ async def create_evaluation(
     with request.app.state.session_factory() as session:
         result = _load_result(session, body.result_set_id)
         fields = _evaluation_fields(session, body)
-        server = session.get(Server, fields["server_id"]) if fields.get("server_id") is not None else None
-        # 评测服务器就是结果所在服务器时不需要拷贝
-        copy = server is not None and server.id != result.server_id
-        if copy and ssh_target(result.server) is None:
-            raise HTTPException(
-                422, f"结果所在服务器 {result.server.name} 没有填写 SSH 用户，无法把数据拷贝到评测服务器"
-            )
-        evaluation = Evaluation(
-            result_set=result,
-            metrics=fields["metrics"],
-            reference=fields["reference"],
-            config_id=fields["config_id"],
-            label_file=fields.get("label_file"),
-            gt_dir=fields.get("gt_dir"),
-            lq_dir=fields.get("lq_dir"),
-            python=fields.get("python"),
-            server=server if copy else None,
-            status="copying" if copy else "pending",
-            output_dir="",
-        )
-        session.add(evaluation)
-        session.flush()
-        if copy:
-            evaluation.data_path = posixpath.join(fields["server_path"], f"result_{result.id}")
-        base = evaluation.data_path or result.path
-        evaluation.output_dir = posixpath.join(base, "eval", str(evaluation.id))
-        if evaluation.lq_dir:
-            source = None if body.recompute_lq else find_lq_baseline(session, evaluation)
-            evaluation.lq_source_id = source.id if source is not None else None
-            evaluation.compute_lq = source is None
-        if not copy:
-            job = evaluation_job(settings, result, evaluation, fields["num_devices"], body.priority, body.submitter)
-            session.add(job)
-            session.flush()
-            evaluation.job_id = job.id
+        evaluation = _prepare_evaluation(session, result, body, fields, settings)
+        copy = evaluation.status == "copying"
         session.commit()
         evaluation_id = evaluation.id
     if copy:
@@ -604,10 +619,56 @@ async def create_evaluation(
         return evaluation_out(_load_evaluation(session, evaluation_id))
 
 
+@router.post(
+    "/projects/{project_id}/evaluations", response_model=ProjectEvaluationOut, status_code=201,
+    summary="运行评测工程（批量评测项目内的结果集）",
+    description=(
+        "对项目内全部或指定结果集应用同一组评测参数，单次最多 500 个结果集。"
+        "参数校验及评测、任务记录创建在同一事务中完成，校验失败时不创建任何评测。"
+        "201 表示整批已创建，各项独立排队、运行和收集结果；重复请求会创建新一批评测。"
+    ),
+)
+async def create_project_evaluations(
+    project_id: int, body: ProjectEvaluationCreate, request: Request,
+    settings: Settings = Depends(get_settings),
+):
+    with request.app.state.session_factory() as session:
+        if session.get(Project, project_id) is None:
+            raise HTTPException(404, "项目不存在")
+        fields = _evaluation_fields(session, body)
+        query = select(ResultSet).where(ResultSet.project_id == project_id).options(selectinload(ResultSet.server))
+        if body.result_set_ids is not None:
+            query = query.where(ResultSet.id.in_(body.result_set_ids))
+        results = list(session.scalars(query.order_by(ResultSet.id).limit(501)))
+        if body.result_set_ids is not None and {r.id for r in results} != set(body.result_set_ids):
+            raise HTTPException(422, "result_set_ids 中有不存在或不属于该项目的结果集")
+        if not results:
+            raise HTTPException(422, "项目内没有可评测的结果集")
+        if len(results) > 500:
+            raise HTTPException(422, "单次最多评测 500 个结果集，请用 result_set_ids 分批提交")
+        evaluations = [_prepare_evaluation(session, result, body, fields, settings) for result in results]
+        session.commit()
+        ids = [e.id for e in evaluations]
+        copy_ids = [e.id for e in evaluations if e.status == "copying"]
+    for evaluation_id in copy_ids:
+        request.app.state.copier.submit(evaluation_id, fields["num_devices"], body.priority, body.submitter)
+    with request.app.state.session_factory() as session:
+        query = select(Evaluation).where(Evaluation.id.in_(ids)).options(
+            selectinload(Evaluation.job), selectinload(Evaluation.result_set).selectinload(ResultSet.server),
+        ).order_by(Evaluation.result_set_id)
+        return ProjectEvaluationOut(
+            project_id=project_id, total=len(ids), items=[evaluation_out(e) for e in session.scalars(query)],
+        )
+
+
 @router.get("/evaluations", response_model=list[EvaluationOut], summary="评测列表")
 def list_evaluations(
-    result_set_id: int | None = Query(None),
+    result_set_id: int | None = Query(None, description="结果集 ID"),
+    project_id: int | None = Query(None, description="结果集当前所属的项目 ID"),
+    config_id: int | None = Query(None, description="创建评测时使用的配置 ID"),
+    status: list[EvaluationStatus] | None = Query(None, description="评测状态，可重复传递，满足其一即可"),
     limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     session: Session = Depends(get_session),
 ):
     query = select(Evaluation).options(
@@ -615,7 +676,13 @@ def list_evaluations(
     )
     if result_set_id is not None:
         query = query.where(Evaluation.result_set_id == result_set_id)
-    return [evaluation_out(e) for e in session.scalars(query.order_by(Evaluation.id.desc()).limit(limit))]
+    if project_id is not None:
+        query = query.join(Evaluation.result_set).where(ResultSet.project_id == project_id)
+    if config_id is not None:
+        query = query.where(Evaluation.config_id == config_id)
+    if status:
+        query = query.where(Evaluation.status.in_(status))
+    return [evaluation_out(e) for e in session.scalars(query.order_by(Evaluation.id.desc()).limit(limit).offset(offset))]
 
 
 @router.get("/evaluations/{evaluation_id}", response_model=EvaluationOut, summary="评测详情")

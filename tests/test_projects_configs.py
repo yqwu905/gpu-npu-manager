@@ -133,6 +133,137 @@ def test_eval_configs(env):
     assert client.get("/api/eval-configs").json() == []
 
 
+def test_project_evaluations(env):
+    client, _, data, ids = env
+    project = client.post("/api/projects", json={"name": "external-sr"}).json()
+    results = [client.post("/api/results", json={
+        "server_id": ids["srv"], "path": str(data / name), "project_id": project["id"],
+    }).json() for name in ("model-a", "model-b")]
+    config = client.post("/api/eval-configs", json={
+        "name": "external-sr", "metrics": ["psnr"], "gt_dir": str(data / "gt"),
+        "lq_dir": str(data / "lq"), "python": sys.executable,
+    }).json()
+
+    resp = client.post(f"/api/projects/{project['id']}/evaluations", json={
+        "config_id": config["id"], "priority": 12, "submitter": "external-app",
+    })
+    assert resp.status_code == 201, resp.text
+    batch = resp.json()
+    assert batch["project_id"] == project["id"] and batch["total"] == 2
+    evaluations = batch["items"]
+    assert [e["result_set_id"] for e in evaluations] == [r["id"] for r in results]
+    assert all(e["status"] == "pending" and e["config_id"] == config["id"] for e in evaluations)
+    assert evaluations[0]["compute_lq"] is True and evaluations[1]["compute_lq"] is False
+    assert evaluations[1]["lq_source_id"] == evaluations[0]["id"]
+    for evaluation in evaluations:
+        job = client.get(f"/api/jobs/{evaluation['job_id']}").json()
+        assert (job["priority"], job["submitter"], job["num_devices"]) == (12, "external-app", 0)
+
+    params = {"project_id": project["id"], "config_id": config["id"], "status": ["pending", "running"]}
+    listed = client.get("/api/evaluations", params=params).json()
+    assert [e["id"] for e in listed] == [e["id"] for e in reversed(evaluations)]
+    assert client.get("/api/evaluations", params={**params, "offset": 1, "limit": 1}).json() == listed[1:]
+    assert client.get("/api/evaluations", params={**params, "config_id": 999}).json() == []
+    assert client.get("/api/evaluations", params={"project_id": 999}).json() == []
+    assert client.get("/api/evaluations", params={"status": "invalid"}).status_code == 422
+    assert client.get("/api/evaluations", params={"offset": -1}).status_code == 422
+
+    run_until(client, lambda: all(
+        client.get(f"/api/evaluations/{e['id']}").json()["status"] == "succeeded" for e in evaluations
+    ))
+    completed = client.get("/api/evaluations", params={**params, "status": "succeeded"}).json()
+    assert len(completed) == 2 and completed[1]["values"]["psnr"] > completed[0]["values"]["psnr"]
+    assert all(e["counts"]["psnr"] == 3 for e in completed)
+    assert completed[0]["lq_values"] == completed[1]["lq_values"]
+
+    # 指定子集时去重，且请求参数仍可覆盖配置；每次提交创建新的评测。
+    resp = client.post(f"/api/projects/{project['id']}/evaluations", json={
+        "result_set_ids": [results[1]["id"], results[1]["id"]], "config_id": config["id"],
+        "metrics": ["ssim"], "lq_dir": None,
+    })
+    assert resp.status_code == 201, resp.text
+    subset = resp.json()
+    assert subset["total"] == 1 and subset["items"][0]["result_set_id"] == results[1]["id"]
+    assert subset["items"][0]["metrics"] == ["ssim"] and subset["items"][0]["lq_dir"] is None
+    assert subset["items"][0]["id"] not in [e["id"] for e in evaluations]
+
+
+def test_project_evaluation_validation_is_atomic(env, monkeypatch):
+    client, tmp_path, data, ids = env
+    project = client.post("/api/projects", json={"name": "atomic"}).json()
+    url = f"/api/projects/{project['id']}/evaluations"
+    assert client.post("/api/projects/999/evaluations", json={"metrics": ["psnr"]}).status_code == 404
+    assert client.post(url, json={"metrics": ["psnr"]}).status_code == 422  # 空项目
+    for name, server in (("model-a", "eval-srv"), ("gt", "srv"), ("model-b", "no-ssh")):
+        resp = client.post("/api/results", json={
+            "server_id": ids[server], "path": str(data / name), "project_id": project["id"],
+        })
+        assert resp.status_code == 201, resp.text
+    outside = client.post("/api/results", json={"server_id": ids["srv"], "path": str(data / "gt")}).json()
+    for body in ({}, {"config_id": 999}, {"metrics": ["invalid"]},
+                 {"metrics": ["psnr"], "result_set_ids": []},
+                 {"metrics": ["psnr"], "result_set_ids": [999]},
+                 {"metrics": ["psnr"], "result_set_ids": [outside["id"]]},
+                 {"metrics": ["psnr"], "result_set_id": outside["id"]},
+                 {"metrics": ["psnr"], "result_set_ids": list(range(501))}):
+        assert client.post(url, json=body).status_code == 422, body
+    # 第一项本地建任务、第二项需拷贝、第三项缺少 SSH 用户；任务与评测整批回滚。
+    copies = []
+    monkeypatch.setattr(client.app.state.copier, "submit", lambda *args: copies.append(args))
+    resp = client.post(url, json={
+        "metrics": ["psnr"], "server_id": ids["eval-srv"], "server_path": str(tmp_path / "eval-host"),
+    })
+    assert resp.status_code == 422 and "SSH" in resp.json()["detail"]
+    assert copies == []
+    assert client.get("/api/evaluations").json() == []
+    assert client.get("/api/jobs").json()["total"] == 0
+
+
+def test_project_evaluations_limit(env):
+    from app.models import Project, ResultSet
+
+    client, _, _, ids = env
+    with client.app.state.session_factory() as session:
+        project = Project(name="large-project")
+        session.add(project)
+        session.flush()
+        project_id = project.id
+        session.add_all([
+            ResultSet(name=f"result-{i}", server_id=ids["srv"], path=f"/data/result-{i}", project_id=project_id)
+            for i in range(501)
+        ])
+        session.commit()
+    resp = client.post(f"/api/projects/{project_id}/evaluations", json={"metrics": ["psnr"]})
+    assert resp.status_code == 422 and "500" in resp.json()["detail"]
+    assert client.get("/api/evaluations").json() == []
+    assert client.get("/api/jobs").json()["total"] == 0
+
+
+def test_project_evaluations_copy_then_run(env):
+    client, tmp_path, data, ids = env
+    project = client.post("/api/projects", json={"name": "copy-batch"}).json()
+    for name in ("model-a", "model-b"):
+        resp = client.post("/api/results", json={
+            "server_id": ids["srv"], "path": str(data / name), "project_id": project["id"],
+        })
+        assert resp.status_code == 201, resp.text
+    resp = client.post(f"/api/projects/{project['id']}/evaluations", json={
+        "metrics": ["psnr"], "gt_dir": str(data / "gt"),
+        "server_id": ids["eval-srv"], "server_path": str(tmp_path / "batch-eval-host"),
+    })
+    assert resp.status_code == 201, resp.text
+    evaluations = resp.json()["items"]
+    assert len(evaluations) == 2
+    for evaluation in evaluations:
+        assert evaluation["status"] == "copying" and evaluation["job_id"] is None
+        copied = wait_status(client, evaluation["id"], ("pending", "failed"))
+        assert copied["status"] == "pending", copied["error"]
+        assert Path(copied["data_path"]).is_dir()
+    run_until(client, lambda: all(
+        client.get(f"/api/evaluations/{e['id']}").json()["status"] == "succeeded" for e in evaluations
+    ))
+
+
 def wait_status(client, evaluation_id, statuses, timeout=30):
     deadline = time.time() + timeout
     while time.time() < deadline:

@@ -86,7 +86,8 @@ def test_images_list(env, monkeypatch):
     resp, files = image_list(client, a)
     body = resp.json()
     assert resp.headers["content-encoding"] == "gzip"
-    assert resp.headers["cache-control"] == "private, no-cache" and resp.headers["vary"] == "Accept-Encoding"
+    assert resp.headers["cache-control"] == "private, no-cache"
+    assert "accept-encoding" in {v.strip().lower() for v in resp.headers["vary"].split(",")}
     assert resp.headers["x-content-type-options"] == "nosniff" and "agent;dur=" in resp.headers["server-timing"]
     assert [f[0] for f in body["files"]] == images
     assert (body["total"], body["missing"], body["skipped"], body["truncated"], body["source"]) == (4, 1, 1, False, "agent")
@@ -96,6 +97,12 @@ def test_images_list(env, monkeypatch):
         else:
             st = os.stat(res / path)
             assert (size, v) == (st.st_size, imaging.version(st))
+
+    cors = client.get(f"/api/results/{a}/images", headers={"Origin": "http://localhost:3000"})
+    assert cors.json() == body
+    assert cors.headers["access-control-allow-origin"] == "http://localhost:3000"
+    assert {"accept-encoding", "origin"} <= {v.strip().lower() for v in cors.headers["vary"].split(",")}
+    assert "ETag" in cors.headers["access-control-expose-headers"]
 
     etag = resp.headers["etag"]
     resp = client.get(f"/api/results/{a}/images", headers={"If-None-Match": etag})

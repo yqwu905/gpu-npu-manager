@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "GPU/NPU 服务器管理平台",
-    "description": "管理昇腾 NPU 与英伟达 GPU 服务器：状态查看、任务调度、推理结果评测。",
+    "description": "管理昇腾 NPU 与英伟达 GPU 服务器：状态查看、任务调度、推理结果评测。外部应用可直接调用 /api 下的接口，无需登录、API Key 或 Authorization 请求头。仅本地使用时请监听 127.0.0.1；允许 localhost、127.0.0.1 和 [::1] 的浏览器应用跨端口调用。",
     "version": "0.1.0"
   },
   "paths": {
@@ -2512,6 +2512,7 @@
           "results"
         ],
         "summary": "对结果集发起评测",
+        "description": "异步提交评测。使用 config_id 或显式 metrics；返回后按 id 查询评测状态，201 表示已创建。",
         "operationId": "create_evaluation_api_evaluations_post",
         "requestBody": {
           "required": true,
@@ -2566,8 +2567,74 @@
                   "type": "null"
                 }
               ],
+              "description": "结果集 ID",
               "title": "Result Set Id"
-            }
+            },
+            "description": "结果集 ID"
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "结果集当前所属的项目 ID",
+              "title": "Project Id"
+            },
+            "description": "结果集当前所属的项目 ID"
+          },
+          {
+            "name": "config_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "创建评测时使用的配置 ID",
+              "title": "Config Id"
+            },
+            "description": "创建评测时使用的配置 ID"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "copying",
+                      "pending",
+                      "running",
+                      "succeeded",
+                      "failed"
+                    ],
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "评测状态，可重复传递，满足其一即可",
+              "title": "Status"
+            },
+            "description": "评测状态，可重复传递，满足其一即可"
           },
           {
             "name": "limit",
@@ -2579,6 +2646,17 @@
               "minimum": 1,
               "default": 100,
               "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
             }
           }
         ],
@@ -2593,6 +2671,59 @@
                     "$ref": "#/components/schemas/EvaluationOut"
                   },
                   "title": "Response List Evaluations Api Evaluations Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{project_id}/evaluations": {
+      "post": {
+        "tags": [
+          "results"
+        ],
+        "summary": "运行评测工程（批量评测项目内的结果集）",
+        "description": "对项目内全部或指定结果集应用同一组评测参数，单次最多 500 个结果集。参数校验及评测、任务记录创建在同一事务中完成，校验失败时不创建任何评测。201 表示整批已创建，各项独立排队、运行和收集结果；重复请求会创建新一批评测。",
+        "operationId": "create_project_evaluations_api_projects__project_id__evaluations_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectEvaluationCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectEvaluationOut"
                 }
               }
             }
@@ -4137,10 +4268,6 @@
       },
       "EvaluationCreate": {
         "properties": {
-          "result_set_id": {
-            "type": "integer",
-            "title": "Result Set Id"
-          },
           "config_id": {
             "anyOf": [
               {
@@ -4295,6 +4422,10 @@
               }
             ],
             "title": "Submitter"
+          },
+          "result_set_id": {
+            "type": "integer",
+            "title": "Result Set Id"
           }
         },
         "type": "object",
@@ -5688,6 +5819,213 @@
           "name"
         ],
         "title": "ProjectCreate"
+      },
+      "ProjectEvaluationCreate": {
+        "properties": {
+          "config_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Id",
+            "description": "评测配置；请求中另外给出的字段覆盖配置中的值"
+          },
+          "metrics": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "psnr",
+                    "ssim",
+                    "lpips",
+                    "ocr_a",
+                    "cer",
+                    "ned"
+                  ]
+                },
+                "type": "array",
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metrics",
+            "description": "不用配置时必填"
+          },
+          "reference": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference",
+            "description": "可选，服务器上的参考目录（按文件名配对图片和 .txt）、参考值 jsonl（按 id 合并 ref_image / ref_text），或 PaddleOCR 格式的文字标注文件"
+          },
+          "label_file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label File"
+          },
+          "gt_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gt Dir"
+          },
+          "lq_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lq Dir"
+          },
+          "server_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server Id",
+            "description": "评测服务器，见评测配置"
+          },
+          "server_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server Path"
+          },
+          "num_devices": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 8.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Num Devices",
+            "description": "LPIPS 可用 1 张卡加速，其他指标用 0 即可；不填时取配置中的值或 0"
+          },
+          "python": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1024
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Python",
+            "description": "运行评测脚本的 python 解释器，如 /path/to/.venv/bin/python；为空时用中心服务的 GNM_EVAL_PYTHON（默认 python3）"
+          },
+          "recompute_lq": {
+            "type": "boolean",
+            "title": "Recompute Lq",
+            "description": "不复用同配置已有的 LQ 基线，本次重新计算（有 LQ 目录时有效）",
+            "default": false
+          },
+          "priority": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": -100.0,
+            "title": "Priority",
+            "default": 0
+          },
+          "submitter": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Submitter"
+          },
+          "result_set_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array",
+                "maxItems": 500,
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Set Ids",
+            "description": "只评测项目内指定的结果集，重复 ID 自动去重；不填时评测项目内全部结果集，单次最多 500 个"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ProjectEvaluationCreate"
+      },
+      "ProjectEvaluationOut": {
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "title": "Project Id"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "本次创建的评测数量"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EvaluationOut"
+            },
+            "type": "array",
+            "title": "Items",
+            "description": "按结果集 ID 升序返回，每项的 id 用于查询本次评测的进度和结果"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id",
+          "total",
+          "items"
+        ],
+        "title": "ProjectEvaluationOut"
       },
       "ProjectOut": {
         "properties": {
