@@ -33,10 +33,16 @@ git clone https://github.com/yqwu905/gpu-npu-manager && cd gpu-npu-manager
 (cd web && npm ci && npm run build)
 pip install -r server/requirements.txt
 cd server
-GNM_AGENT_TOKEN=<token> uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000
+GNM_AGENT_TOKEN=<token> uvicorn app.main:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
 打开 `http://<地址>:8000/` 进入管理页面，`http://<地址>:8000/docs` 可在线调试接口。升级中心服务时 `git pull` 后重新构建前端并重启即可，数据库会自动补上新增的列。`server/requirements.txt` 里有 Pillow：节点没有 Pillow 时，对比页的缩略图和预览由中心服务生成。多人使用对比页时建议在前面加一层支持 HTTP/2 的反向代理，见下文“部署建议”。
+
+### 本地外部应用接入
+
+中心服务的 `/api` 接口无需登录、API Key 或鉴权请求头，上面的启动命令只监听本机。支持服务器列表与空闲卡查询、任务查询与创建、推理结果登记、单次或项目批量评测、评测结果查询。浏览器应用可从 `localhost`、`127.0.0.1`、`[::1]` 的任意端口跨域调用。
+
+接入步骤、字段、curl 和 Python 示例见 [外部应用 API 文档](docs/external-api.md)；完整接口见 [docs/api.md](docs/api.md) 与 [OpenAPI](docs/openapi.json)。在线文档：`http://127.0.0.1:8000/docs`，机器可读定义：`http://127.0.0.1:8000/openapi.json`。`GNM_AGENT_TOKEN` 是中心服务连接节点 Agent 的配置，外部应用不需要携带它。
 
 ### 部署建议
 

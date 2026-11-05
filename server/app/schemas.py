@@ -216,6 +216,13 @@ class JobCreate(BaseModel):
         description="可被抢占：运行中遇到放不下的更高优先级任务时让出卡并重新排队，有空闲卡后自动重新运行（从头运行）",
     )
 
+    @field_validator("command")
+    @classmethod
+    def _check_command(cls, value):
+        if not value.strip():
+            raise ValueError("command 不能为空白")
+        return value
+
     @field_validator("env")
     @classmethod
     def _check_env(cls, value):
@@ -435,8 +442,9 @@ class EvalConfigOut(EvalConfigBase):
     updated_at: datetime
 
 
-class EvaluationCreate(BaseModel):
-    result_set_id: int
+class EvaluationOptions(BaseModel):
+    """单次评测和项目批量评测共用的参数。"""
+
     config_id: int | None = Field(default=None, description="评测配置；请求中另外给出的字段覆盖配置中的值")
     metrics: list[MetricName] | None = Field(default=None, min_length=1, description="不用配置时必填")
     reference: str | None = Field(default=None, description="可选，服务器上的参考目录（按文件名配对图片和 .txt）、参考值 jsonl（按 id 合并 ref_image / ref_text），或 PaddleOCR 格式的文字标注文件")
@@ -450,6 +458,23 @@ class EvaluationCreate(BaseModel):
     recompute_lq: bool = Field(default=False, description="不复用同配置已有的 LQ 基线，本次重新计算（有 LQ 目录时有效）")
     priority: int = Field(default=0, ge=-100, le=100)
     submitter: str | None = None
+
+
+class EvaluationCreate(EvaluationOptions):
+    result_set_id: int
+
+
+class ProjectEvaluationCreate(EvaluationOptions):
+    # 子集字段拼错时应报错，不能意外按省略子集的语义运行整个项目。
+    model_config = ConfigDict(extra="forbid")
+
+    result_set_ids: list[int] | None = Field(
+        default=None, min_length=1, max_length=500,
+        description="只评测项目内指定的结果集，重复 ID 自动去重；不填时评测项目内全部结果集，单次最多 500 个",
+    )
+
+
+EvaluationStatus = Literal["copying", "pending", "running", "succeeded", "failed"]
 
 
 class EvaluationProgress(BaseModel):
@@ -477,7 +502,7 @@ class EvaluationOut(BaseModel):
     output_dir: str
     job_id: int | None = None
     job_status: str | None = None
-    status: Literal["copying", "pending", "running", "succeeded", "failed"]
+    status: EvaluationStatus
     values: dict[str, float | None] | None = Field(default=None, description="整体指标，无法计算的为 null")
     counts: dict[str, int] | None = Field(default=None, description="每个指标参与计算的样本数")
     errors: dict[str, str] | None = Field(default=None, description="未能计算的指标及原因")
@@ -491,6 +516,12 @@ class EvaluationOut(BaseModel):
     error: str | None = None
     created_at: datetime
     finished_at: datetime | None = None
+
+
+class ProjectEvaluationOut(BaseModel):
+    project_id: int
+    total: int = Field(description="本次创建的评测数量")
+    items: list[EvaluationOut] = Field(description="按结果集 ID 升序返回，每项的 id 用于查询本次评测的进度和结果")
 
 
 class CompareResultSet(BaseModel):

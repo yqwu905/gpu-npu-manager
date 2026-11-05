@@ -1,9 +1,10 @@
 # 接口说明（服务器与卡状态、任务调度、推理结果与评测）
 
-供前端设计和对接使用。完整字段定义见 [openapi.json](openapi.json)，服务启动后也可以访问 `http://<中心服务>/docs` 在线调试。
+供前端与外部应用对接使用。六项核心能力的接入流程和调用示例见 [external-api.md](external-api.md)。完整字段定义见 [openapi.json](openapi.json)，服务启动后也可以访问 `http://<中心服务>/docs` 在线调试。
 
 - 所有接口前缀为 `/api`，返回 JSON，时间均为 UTC ISO 8601 字符串。
-- Web 端不需要登录。
+- 中心服务 API 不需要登录、API Key 或鉴权请求头；本地使用时以 `--host 127.0.0.1` 启动。
+- 允许 `http` / `https` 的 `localhost`、`127.0.0.1`、`[::1]` 浏览器应用从任意端口跨域调用，不使用凭证。
 - 多值查询参数用重复参数传递，例如 `?tag=a100&tag=lab1`。
 
 ## 页面与接口对应
@@ -21,6 +22,7 @@
 | 结果集列表 / 登记 | `GET /api/results`、`POST /api/results` |
 | 结果集详情（样本浏览） | `GET /api/results/{id}`、`GET /api/results/{id}/samples`、`GET /api/results/{id}/file`、`GET /api/evaluations?result_set_id=` |
 | 发起评测 | `GET /api/evaluators`、`POST /api/evaluations` |
+| 运行评测工程 | `POST /api/projects/{id}/evaluations`；历史用 `GET /api/evaluations?project_id=` 查询 |
 | 对比（指标 / 图片对比） | `GET /api/compare/metrics`、`GET /api/compare/samples`；图片对比视图用 `GET /api/results/{id}/images`、`GET /api/results/{id}/image`；LQ 数据集用 `GET /api/lq-sets`、`GET /api/lq-sets/{id}/images`、`GET /api/lq-sets/{id}/image` |
 | 任务详情与日志 | `GET /api/jobs/{id}`、`GET /api/jobs/{id}/log`、`POST /api/jobs/{id}/cancel`、`POST /api/jobs/{id}/requeue`、`PATCH /api/jobs/{id}`、`DELETE /api/jobs/{id}` |
 
@@ -103,7 +105,7 @@
 - `devices[].index`：逻辑卡号，任务调度时就是 `CUDA_VISIBLE_DEVICES` / `ASCEND_RT_VISIBLE_DEVICES` 的值。
 - `devices[].utilization`：GPU 为 GPU 利用率，NPU 为 AICore 利用率，单位 %。
 - `devices[].memory_*`：GPU 为显存，910B 为 HBM，310P 为板载内存，单位 MB。
-- `devices[].idle`：服务器在线、健康为 OK、没有进程、已用显存低于阈值（GPU 默认 1 GB，NPU 默认 6 GB），且没有被平台任务占用。
+- `devices[].idle`：服务器在线、健康为 OK / Warning（或未提供健康信息）、没有进程、已用显存低于阈值（GPU 默认 1 GB，NPU 默认 6 GB），且没有被平台任务占用。
 - `devices[].job_id`：占用这张卡的平台任务 ID，没有则为 `null`。
 - 取不到的数值为 `null`（例如部分型号不提供功耗），前端显示为 “-”。
 
@@ -428,7 +430,21 @@
 
 `DELETE /api/evaluations/{id}` 删除评测记录，返回 204。拷贝中、排队或运行中的评测返回 409，需先在任务队列中取消评测任务。结果集的指标会改用其他评测的值。引用它的 LQ 基线的评测改用同配置的其他基线，没有时不再显示 LQ 基线，之后的评测会重新计算。服务器上的输出文件不删除。
 
-`GET /api/evaluations?result_set_id=7` 列出某个结果集的评测历史，`GET /api/evaluations/{id}` 返回单个。
+`GET /api/evaluations?result_set_id=7` 列出某个结果集的评测历史，`GET /api/evaluations/{id}` 返回单个。列表按评测 ID 倒序返回数组，另支持 `project_id`（结果集当前所属项目）、`config_id`、`status`（可重复，多值为“或”）、`offset`（默认 0）与 `limit`（默认 100，1–500），不同筛选条件同时满足。逐样本指标见 `/api/results/{id}/samples`，多组指标对比见 `/api/compare/metrics`。
+
+### POST /api/projects/{project_id}/evaluations
+
+运行评测工程：对项目内全部或指定结果集批量发起评测，使用同一个评测配置或显式参数。请求字段与 `POST /api/evaluations` 相同，但用可选的 `result_set_ids` 代替必填的 `result_set_id`：
+
+```json
+{"config_id": 3, "result_set_ids": [7, 8], "priority": 10, "submitter": "external-app"}
+```
+
+省略 `result_set_ids` 时处理项目内全部结果集，单次最多 500 个；传入的 ID 自动去重并按结果集 ID 升序处理。每个 ID 都必须存在且属于该项目。可以用 `metrics`、路径、`num_devices`、`python` 等覆盖配置，也可以不用配置直接传 `metrics`。不接受未定义的请求字段，避免子集字段拼错时意外运行整个项目。
+
+返回 201，结构为 `{"project_id": 2, "total": 2, "items": [EvaluationOut, ...]}`。保存 `items[].id` 后用 `/api/evaluations/{id}` 查询本批各项的进度和结果。每项独立排队、运行和收集指标；需要拷贝时初始状态为 `copying`，否则为 `pending`。
+
+项目不存在返回 404；空项目、ID 不属于项目、缺少指标 / 配置、缺少拷贝所需的 SSH 信息、超过数量限制返回 422，整批不会创建评测或任务记录，也不会启动拷贝。参数校验与记录创建在同一事务内完成，后续执行仍可能分别失败；重复提交会新建一批评测。所有配置路径与跨服务器拷贝规则同单次评测。
 
 ### GET /api/compare/metrics?ids=7&ids=8&ids=9
 
@@ -482,7 +498,7 @@
 | URL 带 `v`，与文件当前版本一致 | `private, max-age=31536000, immutable` |
 | URL 带 `v`，但文件已改写 | `private, no-cache`，ETag 为实际版本的 |
 | URL 不带 `v` | `private, max-age=300` |
-| `/images` | `private, no-cache`，带 ETag 和 `Vary: Accept-Encoding` |
+| `/images` | `private, no-cache`，带 ETag，`Vary` 包含 `Accept-Encoding`；跨域响应另含 `Origin` |
 | 出错 | `no-store` |
 
 - URL 带 `v` 且 `If-None-Match` 与由 (v, kind, 参数) 算出的 ETag 一致时，中心服务直接返回 304，不访问 Agent。

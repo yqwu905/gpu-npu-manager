@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from .config import Settings
 from .deployer import Deployer
@@ -50,8 +51,19 @@ def create_app(settings: Settings | None = None, transport: httpx.AsyncBaseTrans
     app = FastAPI(
         title="GPU/NPU 服务器管理平台",
         version="0.1.0",
-        description="管理昇腾 NPU 与英伟达 GPU 服务器：状态查看、任务调度、推理结果评测。",
+        description=(
+            "管理昇腾 NPU 与英伟达 GPU 服务器：状态查看、任务调度、推理结果评测。"
+            "外部应用可直接调用 /api 下的接口，无需登录、API Key 或 Authorization 请求头。"
+            "仅本地使用时请监听 127.0.0.1；允许 localhost、127.0.0.1 和 [::1] 的浏览器应用跨端口调用。"
+        ),
         lifespan=lifespan,
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|\[::1\])(:[0-9]+)?",
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "If-None-Match"],
+        expose_headers=["ETag", "X-Source-Version", "Content-Disposition", "Server-Timing", "Retry-After"],
     )
     mount_web(app, settings.web_dir)
     app.state.settings = settings
