@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { jobsApi } from '../api/jobs'
@@ -8,6 +8,23 @@ import { Badge, ErrorNote, MockBadge, Modal } from '../components/common'
 import { IconPlus } from '../components/Icons'
 import { ACC_LOOK, JOB_LOOK, clock, duration, schedulableIdle } from '../lib/format'
 import { useMock, usePoll } from '../lib/hooks'
+import {
+  FOLLOW_CHUNK_BYTES,
+  INITIAL_TAIL_BYTES,
+  MAX_FOLLOW_WINDOW_BYTES,
+  MAX_PAUSED_BUFFER_BYTES,
+  OLDER_CHUNK_BYTES,
+  POLL_INTERVAL_MS,
+  applyAppend,
+  applyPrepend,
+  applyTail,
+  emptyLogState,
+  formatLogBytes,
+  loadedBytes,
+  logText,
+  needsTailJump,
+  type LogState,
+} from '../lib/jobLog'
 
 const TABS: ('all' | JobStatus)[] = ['all', 'queued', 'starting', 'running', 'succeeded', 'failed', 'cancelled', 'lost']
 const ORDER: Record<JobStatus, number> = { queued: 0, starting: 1, running: 1, succeeded: 2, failed: 2, cancelled: 2, lost: 1 }
@@ -205,39 +222,178 @@ export default function JobsPage() {
 }
 
 function JobDetail({ j }: { j: Job }) {
-  const [log, setLog] = useState('')
-  const [offset, setOffset] = useState(0)
-  const [size, setSize] = useState(0)
+  const [logState, setLogState] = useState<LogState>(emptyLogState)
   const [follow, setFollow] = useState(true)
+  const [loadingOlder, setLoadingOlder] = useState(false)
   const pre = useRef<HTMLPreElement>(null)
-  const offRef = useRef(0)
+  const stateRef = useRef<LogState>(emptyLogState())
+  const followRef = useRef(follow)
+  const wakeRef = useRef<(() => void) | null>(null)
+  const olderAcRef = useRef<AbortController | null>(null)
+  const pendingScrollRef = useRef<{ prevHeight: number; prevTop: number } | null>(null)
   const active = j.status === 'running' || j.status === 'starting'
 
+  followRef.current = follow
+
+  // 任务重新启动（如被抢占后重跑）时重置日志缓冲
   useEffect(() => {
-    let stop = false
-    const pull = async () => {
-      if (!j.started_at) return
-      try {
-        const c = await jobsApi.log(j.id, offRef.current)
-        if (stop) return
-        setSize(c.size)
-        if (!c.data) return
-        offRef.current = c.next_offset
-        setOffset(c.next_offset)
-        setLog((s) => s + c.data)
-      } catch {
-        // 日志拉取失败时保留已有内容，下一轮重试
-      }
-    }
-    pull()
-    if (!active) return () => { stop = true }
-    const t = setInterval(pull, 2000)
-    return () => { stop = true; clearInterval(t) }
-  }, [j.id, j.started_at, active])
+    olderAcRef.current?.abort()
+    olderAcRef.current = null
+    const fresh = emptyLogState()
+    stateRef.current = fresh
+    setLogState(fresh)
+    setLoadingOlder(false)
+    setFollow(true)
+  }, [j.id, j.started_at, j.preempt_count])
 
   useEffect(() => {
-    if (follow && pre.current) pre.current.scrollTop = pre.current.scrollHeight
-  }, [log, follow])
+    if (!j.started_at) return
+    let stop = false
+    const ac = new AbortController()
+
+    const sleep = (ms: number) =>
+      new Promise<void>((resolve) => {
+        const done = () => {
+          clearTimeout(timer)
+          ac.signal.removeEventListener('abort', done)
+          if (wakeRef.current === done) wakeRef.current = null
+          resolve()
+        }
+        const timer = setTimeout(done, ms)
+        ac.signal.addEventListener('abort', done, { once: true })
+        wakeRef.current = done
+      })
+
+    const run = async () => {
+      while (!stop) {
+        try {
+          const cur = stateRef.current
+          if (!cur.initialized) {
+            // 优先从末尾拉取最新日志，立即展示
+            const res = await jobsApi.log(j.id, { tail: INITIAL_TAIL_BYTES, signal: ac.signal })
+            if (stop) return
+            const next = applyTail(res)
+            stateRef.current = next
+            setLogState(next)
+            if (!active) return
+            if (res.size - res.next_offset > 3) continue
+            await sleep(POLL_INTERVAL_MS)
+            continue
+          }
+
+          if (followRef.current && needsTailJump(cur.tailOffset, cur.size)) {
+            const res = await jobsApi.log(j.id, { tail: INITIAL_TAIL_BYTES, signal: ac.signal })
+            if (stop) return
+            const next = applyTail(res)
+            stateRef.current = next
+            setLogState(next)
+            if (!active) return
+            if (res.size - res.next_offset > 3) continue
+            await sleep(POLL_INTERVAL_MS)
+            continue
+          }
+
+          // 暂停跟随且已有大量缓冲时暂不继续拉取，重新勾选“跟随最新输出”时立即恢复
+          if (!followRef.current && loadedBytes(cur) >= MAX_PAUSED_BUFFER_BYTES) {
+            if (!active) return
+            await sleep(POLL_INTERVAL_MS)
+            continue
+          }
+
+          const prevTail = cur.tailOffset
+          const res = await jobsApi.log(j.id, { offset: prevTail, limit: FOLLOW_CHUNK_BYTES, signal: ac.signal })
+          if (stop) return
+
+          if (followRef.current && needsTailJump(res.next_offset, res.size)) {
+            const tailRes = await jobsApi.log(j.id, { tail: INITIAL_TAIL_BYTES, signal: ac.signal })
+            if (stop) return
+            const next = applyTail(tailRes)
+            stateRef.current = next
+            setLogState(next)
+            if (!active) return
+            if (tailRes.size - tailRes.next_offset > 3) continue
+            await sleep(POLL_INTERVAL_MS)
+            continue
+          }
+
+          const next = applyAppend(
+            stateRef.current,
+            res,
+            followRef.current ? MAX_FOLLOW_WINDOW_BYTES : undefined,
+          )
+          stateRef.current = next
+          setLogState(next)
+
+          // 还有未追平的字节且本次有推进时立即拉取下一块，不等待轮询间隔
+          if (res.next_offset < res.size && res.next_offset > prevTail) {
+            continue
+          }
+          if (!active) return
+          await sleep(POLL_INTERVAL_MS)
+        } catch {
+          if (stop || ac.signal.aborted) return
+          // 日志拉取失败时保留已有内容，下一轮重试
+          if (!active) return
+          await sleep(POLL_INTERVAL_MS)
+        }
+      }
+    }
+
+    run()
+    return () => {
+      stop = true
+      ac.abort()
+    }
+  }, [j.id, j.started_at, j.preempt_count, active])
+
+  useEffect(() => () => { olderAcRef.current?.abort() }, [])
+
+  const toggleFollow = (checked: boolean) => {
+    setFollow(checked)
+    followRef.current = checked
+    if (checked) wakeRef.current?.()
+  }
+
+  const loadOlder = async () => {
+    const end = stateRef.current.headOffset
+    if (loadingOlder || end <= 0) return
+    setFollow(false)
+    followRef.current = false
+    setLoadingOlder(true)
+    olderAcRef.current?.abort()
+    const ac = new AbortController()
+    olderAcRef.current = ac
+    try {
+      const res = await jobsApi.log(j.id, { tail: OLDER_CHUNK_BYTES, end, signal: ac.signal })
+      if (ac.signal.aborted || stateRef.current.headOffset !== end) return
+      if (pre.current) {
+        pendingScrollRef.current = { prevHeight: pre.current.scrollHeight, prevTop: pre.current.scrollTop }
+      }
+      const next = applyPrepend(stateRef.current, res)
+      stateRef.current = next
+      setLogState(next)
+    } catch {
+      // 加载更早失败时保留当前内容，允许重试
+    } finally {
+      if (olderAcRef.current === ac) olderAcRef.current = null
+      setLoadingOlder(false)
+    }
+  }
+
+  const text = useMemo(() => logText(logState), [logState])
+  const loaded = loadedBytes(logState)
+
+  useLayoutEffect(() => {
+    const el = pre.current
+    if (!el) return
+    if (pendingScrollRef.current) {
+      const { prevHeight, prevTop } = pendingScrollRef.current
+      pendingScrollRef.current = null
+      el.scrollTop = prevTop + (el.scrollHeight - prevHeight)
+      return
+    }
+    if (follow) el.scrollTop = el.scrollHeight
+  }, [logState, follow])
 
   const done = !!j.finished_at
   const steps = [
@@ -288,12 +444,24 @@ function JobDetail({ j }: { j: Job }) {
       <div className="col" style={{ padding: '14px 18px 18px', gap: 8 }}>
         <div className="row">
           <span className="grow" style={{ fontWeight: 500 }}>日志</span>
+          {logState.headOffset > 0 && (
+            <button type="button" className="btn sm" disabled={loadingOlder} onClick={loadOlder}>
+              {loadingOlder ? '加载中…' : '加载更早'}
+            </button>
+          )}
           <label className="row" style={{ gap: 6, fontSize: 13, color: 'var(--ink-2)' }}>
-            <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />跟随最新输出
+            <input type="checkbox" checked={follow} onChange={(e) => toggleFollow(e.target.checked)} />跟随最新输出
           </label>
         </div>
-        <pre ref={pre} className="log">{j.started_at ? log || '（暂无输出）' : '（任务尚未启动，暂无日志）'}</pre>
-        <div className="lbl">按偏移量增量拉取{active ? '，每 2 秒更新' : ''}，已读取 {(offset / 1024).toFixed(1)} / {(size / 1024).toFixed(1)} KB</div>
+        <pre ref={pre} className="log">
+          {!j.started_at ? '（任务尚未启动，暂无日志）' : !logState.initialized ? '（日志加载中…）' : text || '（暂无输出）'}
+        </pre>
+        <div className="lbl">
+          {logState.headOffset > 0
+            ? `优先展示最新 ${formatLogBytes(loaded)} / 共 ${formatLogBytes(logState.size)}（前 ${formatLogBytes(logState.headOffset)} 未加载）`
+            : `优先展示最新日志，已加载 ${formatLogBytes(loaded)} / ${formatLogBytes(logState.size)}`}
+          {active ? ' · 实时更新' : ''}
+        </div>
       </div>
     </aside>
   )

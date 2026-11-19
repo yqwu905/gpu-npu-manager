@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+import gzip
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session, selectinload
 
@@ -12,6 +14,9 @@ from ..timeutil import as_utc
 router = APIRouter(prefix="/api", tags=["jobs"])
 
 COPY_FIELDS = ("name", "command", "workdir", "env", "num_devices", "group", "accelerator", "server_id", "priority", "submitter", "preemptible")
+LOG_DEFAULT_LIMIT = 512 * 1024
+LOG_MAX_LIMIT = 4 * 1024 * 1024
+LOG_GZIP_MIN_BYTES = 1024
 
 
 def _queue_positions(session: Session) -> dict[int, int]:
@@ -180,25 +185,48 @@ def requeue_job(job_id: int, session: Session = Depends(get_session)):
     return job_out(_get_job(session, job.id), _queue_positions(session))
 
 
-@router.get("/jobs/{job_id}/log", response_model=JobLog, summary="增量读取任务日志")
+def _log_response(request: Request, payload: JobLog) -> Response:
+    body = payload.model_dump_json().encode("utf-8")
+    headers = {"Vary": "Accept-Encoding"}
+    if len(body) >= LOG_GZIP_MIN_BYTES and "gzip" in (request.headers.get("accept-encoding") or "").lower():
+        body = gzip.compress(body, compresslevel=1)
+        headers["Content-Encoding"] = "gzip"
+    return Response(content=body, media_type="application/json", headers=headers)
+
+
+@router.get("/jobs/{job_id}/log", response_model=JobLog, summary="读取任务日志")
 async def job_log(
     job_id: int,
     request: Request,
-    offset: int = Query(0, ge=0, description="从第几个字节开始读，首次传 0，之后传上次返回的 next_offset"),
-    limit: int = Query(65536, ge=1, le=1048576, description="最多读取的字节数"),
+    offset: int = Query(0, ge=0, description="从第几个字节开始读，增量拉取时传上次返回的 next_offset"),
+    limit: int = Query(LOG_DEFAULT_LIMIT, ge=1, le=LOG_MAX_LIMIT, description="最多读取的字节数"),
+    tail: int | None = Query(
+        None,
+        ge=1,
+        le=LOG_MAX_LIMIT,
+        description="从末尾（或 end 之前）倒数读取的字节数，优先拉取最新日志；传入时忽略 offset 和 limit",
+    ),
+    end: int | None = Query(
+        None,
+        ge=0,
+        description="与 tail 配合使用，只读取该字节偏移之前的日志，用于向上加载更早日志",
+    ),
 ):
     with request.app.state.session_factory() as session:
         job = _get_job(session, job_id)
         server = job.assigned_server
         if server is None or job.status == "queued":
-            return JobLog(offset=0, next_offset=0, size=0, data="")
+            return _log_response(request, JobLog(offset=0, next_offset=0, size=0, data=""))
         host, port, run = server.host, server.port, job.preempt_count or 0
     try:
-        return await request.app.state.scheduler.agent.read_log(host, port, job_id, offset, limit, run=run)
+        data = await request.app.state.scheduler.agent.read_log(
+            host, port, job_id, offset, limit, run=run, tail=tail, end=end
+        )
     except AgentError as exc:
         if exc.status == 404:
-            return JobLog(offset=0, next_offset=0, size=0, data="")
+            return _log_response(request, JobLog(offset=0, next_offset=0, size=0, data=""))
         raise HTTPException(502, f"读取日志失败：{exc}")
+    return _log_response(request, JobLog.model_validate(data))
 
 
 @router.get("/scheduler", response_model=SchedulerSettings, summary="查询调度模式")

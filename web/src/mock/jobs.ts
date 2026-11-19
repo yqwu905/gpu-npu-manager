@@ -117,9 +117,23 @@ export const mockJobs = {
     return n
   },
   setPriority: (id: number, priority: number) => patch(id, { priority }),
-  log(id: number, offset: number): JobLog {
-    const text = logText(find(id))
-    return { offset, next_offset: text.length, size: text.length, data: text.slice(offset) }
+  log(id: number, query: { offset?: number; limit?: number; tail?: number; end?: number } = {}): JobLog {
+    const bytes = new TextEncoder().encode(logText(find(id)))
+    const size = bytes.length
+    const dec = new TextDecoder()
+    if (query.tail !== undefined) {
+      const endPos = query.end === undefined ? size : Math.max(0, Math.min(query.end, size))
+      let start = Math.max(0, endPos - Math.max(1, query.tail))
+      if (start > 0) {
+        let skip = 0
+        while (skip < 3 && start + skip < endPos && (bytes[start + skip] & 0xc0) === 0x80) skip++
+        start += skip
+      }
+      return { offset: start, next_offset: endPos, size, data: dec.decode(bytes.subarray(start, endPos)) }
+    }
+    const start = Math.max(0, Math.min(query.offset ?? 0, size))
+    const endPos = query.limit === undefined ? size : Math.min(size, start + Math.max(1, query.limit))
+    return { offset: start, next_offset: endPos, size, data: dec.decode(bytes.subarray(start, endPos)) }
   },
   scheduler: () => scheduler,
   setScheduler(s: SchedulerSettings) {

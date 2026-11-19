@@ -191,3 +191,61 @@ def test_error_body_cut_off(tmp_path):
         await client.aclose()
 
     asyncio.run(run())
+
+
+def test_read_log_reuses_connections(stack, tmp_path):
+    """反复读取任务日志时应复用长连接，不每次新建 TCP 连接。"""
+    client, _, sid, accepts = stack
+    port = client.get(f"/api/servers/{sid}").json()["port"]
+    agent_client = client.app.state.scheduler.agent
+    # 直接在 Agent 上创建一个已结束任务并写入日志
+    asyncio.run(agent_client.start_job("127.0.0.1", port, 99, "echo hello-log", str(tmp_path), {}, []))
+    accepts.clear()
+
+    async def poll_many():
+        for _ in range(20):
+            res = await agent_client.read_log("127.0.0.1", port, 99, tail=4096)
+            assert res["size"] >= 0
+
+    asyncio.run(poll_many())
+    assert len(accepts) <= 2, len(accepts)
+
+
+def test_read_log_tail_old_agent_fallback(tmp_path):
+    """旧版 Agent 忽略 tail/end 且不返回 X-Log-Tail 时，中心服务仅用 1 字节探测 size 再精准回读末尾区间。"""
+    import httpx
+
+    content = ("0123456789abcdef" * 1024).encode("utf-8")  # 16 KB
+    calls = []
+
+    def old_agent(request: httpx.Request):
+        params = dict(request.url.params)
+        calls.append(params)
+        offset = max(0, min(int(params.get("offset", "0")), len(content)))
+        limit = max(1, min(int(params.get("limit", "65536")), 1024 * 1024))
+        chunk = content[offset : offset + limit].decode("utf-8")
+        return httpx.Response(
+            200,
+            json={"offset": offset, "next_offset": offset + len(chunk), "size": len(content), "data": chunk},
+        )
+
+    settings = Settings(database_url=f"sqlite:///{tmp_path}/t.db")
+    client = AgentClient(settings, transport=httpx.MockTransport(old_agent))
+
+    async def run():
+        tail = await client.read_log("h", 1, 7, tail=1024)
+        assert tail["offset"] == len(content) - 1024
+        assert tail["next_offset"] == len(content)
+        assert tail["data"] == content[-1024:].decode("utf-8")
+        # 第一次探测只传 limit=1，避免传输多余数据；第二次直接按目标偏移量读取
+        assert calls[0]["limit"] == "1" and calls[0]["tail"] == "1024"
+        assert calls[1] == {"offset": str(len(content) - 1024), "limit": "1024"}
+
+        calls.clear()
+        earlier = await client.read_log("h", 1, 7, tail=512, end=tail["offset"])
+        assert earlier["offset"] == tail["offset"] - 512
+        assert earlier["next_offset"] == tail["offset"]
+        assert earlier["data"] == content[tail["offset"] - 512 : tail["offset"]].decode("utf-8")
+        await client.aclose()
+
+    asyncio.run(run())
