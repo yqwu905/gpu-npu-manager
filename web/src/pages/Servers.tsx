@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { ApiError } from '../api/client'
 import { serversApi } from '../api/servers'
 import type { Accelerator, GroupBy, Server, ServerQuery, ServerStatus, ServerUpdate } from '../api/types'
-import { Badge, Chips, ErrorNote, Modal, Switch } from '../components/common'
+import { Badge, Chips, ErrorNote, Modal, Switch, TagList } from '../components/common'
 import { IconPlus, IconRefresh, IconSearch } from '../components/Icons'
 import { ACC_LOOK, DEVICE_LOOK, STATUS_LOOK, deviceState, gb, num, pct, relTime, schedulableIdle } from '../lib/format'
 import { usePoll } from '../lib/hooks'
@@ -102,7 +102,7 @@ export default function ServersPage() {
         {outdated.length > 0 && <button className="btn" type="button" onClick={upgradeAll} disabled={upgrading}><IconRefresh />升级 Agent（{outdated.length} 台）</button>}
         {bulk ? (
           <>
-            <span className="lbl">已选 {checked.size} 台</span>
+            <span className="lbl shrink-0">已选 {checked.size} 台</span>
             <button className="btn" type="button" onClick={() => setChecked(checked.size === shown.size ? new Set() : new Set(shown.keys()))}>{checked.size === shown.size && shown.size > 0 ? '全不选' : '全选'}</button>
             <button className="btn pri" type="button" disabled={!checked.size} onClick={() => setShowBulk(true)}>修改所选</button>
             <button className="btn" type="button" onClick={exitBulk}>完成</button>
@@ -115,34 +115,34 @@ export default function ServersPage() {
         )}
       </header>
 
-      <section className="card col" style={{ padding: '14px 16px', gap: 12 }}>
-        <div className="row wrap" style={{ gap: 10 }}>
+      <section className="card col" style={{ padding: '14px 16px', gap: 11 }}>
+        <div className="filter-bar">
           <label className="search" style={{ flex: '1 1 220px' }}>
             <IconSearch />
             <input aria-label="搜索服务器" placeholder="搜索名称、地址、主机名、备注" value={qInput} onChange={(e) => setQInput(e.target.value)} />
           </label>
-          <div className="row" style={{ gap: 6 }}>
+          <div className="row shrink-0" style={{ gap: 6 }}>
             <Chips value={acc} options={[['all', '全部'], ['gpu', 'GPU'], ['npu', 'NPU']]} onChange={setAcc} />
           </div>
           <Select label="运行组" value={group} onChange={setGroup} options={fo?.groups ?? []} />
           <Select label="使用人" value={owner} onChange={setOwner} options={fo?.owners ?? []} />
           <Select label="标签" value={tag} onChange={setTag} options={fo?.tags ?? []} />
           <Select label="型号" value={model} onChange={setModel} options={fo?.models ?? []} />
-          <select className="inp" aria-label="在线状态" value={status} onChange={(e) => setStatus(e.target.value as ServerStatus | '')}>
+          <select className="inp filter-select" aria-label="在线状态" value={status} onChange={(e) => setStatus(e.target.value as ServerStatus | '')}>
             <option value="">全部状态</option>
             <option value="online">在线</option>
             <option value="offline">离线</option>
             <option value="unknown">未连通</option>
           </select>
-          <label className="row" style={{ gap: 6, fontSize: 13, color: 'var(--ink-2)', whiteSpace: 'nowrap' }}>
+          <label className="row shrink-0" style={{ gap: 6, fontSize: 13, color: 'var(--ink-2)', whiteSpace: 'nowrap', cursor: 'pointer' }}>
             <input type="checkbox" checked={hasIdle} onChange={(e) => setHasIdle(e.target.checked)} />只看有空闲卡
           </label>
         </div>
-        <div className="row wrap" style={{ gap: 6 }}>
-          <span className="lbl" style={{ marginRight: 4 }}>分组</span>
+        <div className="row wrap" style={{ gap: 6, paddingTop: 10, borderTop: '1px solid var(--border-soft)' }}>
+          <span className="lbl shrink-0" style={{ marginRight: 4 }}>分组视图</span>
           <Chips value={by} options={GROUP_BY} onChange={setBy} />
           <span className="grow" />
-          <span className="lbl">共 {shown.size} 台匹配</span>
+          <span className="lbl shrink-0">共 {shown.size} 台匹配</span>
           {hasFilter && <button type="button" className="btn sm" onClick={clear}>清除筛选</button>}
         </div>
       </section>
@@ -157,9 +157,9 @@ export default function ServersPage() {
             return (
               <section key={String(g.key)} className="col" style={{ gap: 10 }}>
                 {by !== 'none' && (
-                  <div className="row" style={{ alignItems: 'baseline', gap: 10, padding: '0 2px' }}>
-                    <h2>{name}</h2>
-                    <span className="lbl">
+                  <div className="row wrap" style={{ alignItems: 'baseline', gap: '4px 10px', padding: '0 2px' }}>
+                    <h2 className="ellipsis" style={{ maxWidth: '100%' }} title={name}>{name}</h2>
+                    <span className="lbl shrink-0">
                       {ss.length} 台 · 在线 {ss.filter((s) => s.status === 'online').length} · 可调度空闲 {ss.reduce((a, s) => a + schedulableIdle(s), 0)} / {ss.reduce((a, s) => a + s.device_count, 0)} 卡
                     </span>
                   </div>
@@ -189,7 +189,7 @@ export default function ServersPage() {
 
 function Select({ label, value, onChange, options }: { label: string; value: string; onChange: (v: string) => void; options: string[] }) {
   return (
-    <select className="inp" aria-label={label} value={value} onChange={(e) => onChange(e.target.value)}>
+    <select className="inp filter-select" aria-label={label} title={value || `全部${label}`} value={value} onChange={(e) => onChange(e.target.value)}>
       <option value="">全部{label}</option>
       {options.map((o) => <option key={o} value={o}>{o}</option>)}
     </select>
@@ -201,33 +201,38 @@ function ServerCard({ s, selected, onClick, checkable = false }: { s: Server; se
   const h = s.host_info
   const memPct = h ? pct(h.memory_used_mb, h.memory_total_mb) : null
   const disk = h?.disks[0]
+  const subText = `${!s.accelerator ? '连通后自动识别加速卡' : `${s.models.join(' / ') || '无加速卡'} · ${s.device_count} 卡`} · ${s.host}:${s.port}`
+  const hasMetaRow = !!(s.owner || s.group || s.tags.length || !s.schedulable || (s.deploy && s.deploy.status !== 'succeeded') || (s.managed && s.agent_outdated))
+
   return (
     <button type="button" className={selected ? 'srv sel' : 'srv'} onClick={onClick} aria-pressed={selected}>
       <div className="row" style={{ width: '100%' }}>
-        {checkable && <input type="checkbox" checked={selected} readOnly tabIndex={-1} aria-hidden="true" style={{ margin: 0 }} />}
+        {checkable && <input type="checkbox" checked={selected} readOnly tabIndex={-1} aria-hidden="true" style={{ margin: 0, flexShrink: 0 }} />}
         <span className="dot" style={{ background: STATUS_LOOK[s.status].dot }} title={STATUS_LOOK[s.status].name} />
-        <span className="mono grow ellipsis" style={{ fontWeight: 500 }}>{s.name}</span>
+        <span className="mono grow ellipsis" style={{ fontWeight: 600 }} title={s.name}>{s.name}</span>
         {acc && <Badge bg={acc.bg} fg={acc.fg}>{acc.name}</Badge>}
       </div>
-      <div className="lbl" style={{ marginTop: -6 }}>
+      <div className="lbl line-clamp-2" style={{ marginTop: -4, width: '100%' }} title={subText}>
         {!s.accelerator ? '连通后自动识别加速卡' : `${s.models.join(' / ') || '无加速卡'} · ${s.device_count} 卡`} · <span className="mono">{s.host}:{s.port}</span>
       </div>
-      <div className="row wrap" style={{ gap: 6 }}>
-        {s.owner && <span style={{ fontSize: 13, color: 'var(--ink-2)', marginRight: 2 }}>{s.owner}</span>}
-        {s.group && <span className="tag">{s.group}</span>}
-        {s.tags.map((t) => <span key={t} className="tag outline">{t}</span>)}
-        {!s.schedulable && <Badge bg="#FFF4D6" fg="#7A5300">不参与调度</Badge>}
-        <DeployBadge s={s} />
-      </div>
+      {hasMetaRow && (
+        <div className="row wrap" style={{ gap: 5, width: '100%' }}>
+          {s.owner && <span className="ellipsis" style={{ fontSize: 12.5, color: 'var(--ink-2)', maxWidth: 180, marginRight: 2 }} title={s.owner}>{s.owner}</span>}
+          {s.group && <span className="tag" title={s.group}>{s.group}</span>}
+          <TagList tags={s.tags} maxVisible={5} outline asSpanToggle />
+          {!s.schedulable && <Badge bg="#FFF4D6" fg="#7A5300">不参与调度</Badge>}
+          <DeployBadge s={s} />
+        </div>
+      )}
       {s.devices.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 5, width: '100%' }}>
           {s.devices.map((d) => {
             const look = DEVICE_LOOK[deviceState(s, d)]
             return (
               <div key={d.index} className="kc" title={`卡 ${d.index} · ${look.name} · 显存 ${gb(d.memory_used_mb)}/${gb(d.memory_total_mb)} GB`} style={{ background: look.bg, borderColor: look.bd }}>
-                <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', gap: 2 }}>
                   <span className="mono" style={{ fontSize: 11, color: look.fg }}>{d.index}</span>
-                  <span className="mono" style={{ fontSize: 12, fontWeight: 500, color: look.fg }}>{num(d.utilization, 0, '%')}</span>
+                  <span className="mono" style={{ fontSize: 12, fontWeight: 550, color: look.fg }}>{num(d.utilization, 0, '%')}</span>
                 </div>
                 <div style={{ height: 4, borderRadius: 2, background: '#FFFFFF', overflow: 'hidden' }}>
                   <div style={{ height: 4, width: `${pct(d.memory_used_mb, d.memory_total_mb)}%`, background: look.bd }} />
@@ -237,12 +242,12 @@ function ServerCard({ s, selected, onClick, checkable = false }: { s: Server; se
           })}
         </div>
       )}
-      <div className="row" style={{ gap: 14, width: '100%' }}>
-        <span className="lbl">CPU <span className="mono" style={{ color: 'var(--ink)' }}>{num(h?.cpu_percent, 0, '%')}</span></span>
-        <span className="lbl">内存 <span className="mono" style={{ color: 'var(--ink)' }}>{memPct === null ? '-' : `${memPct.toFixed(0)}%`}</span></span>
-        <span className="lbl">磁盘 <span className="mono" style={{ color: 'var(--ink)' }}>{disk ? `${pct(disk.used_gb, disk.total_gb).toFixed(0)}%` : '-'}</span></span>
+      <div className="row wrap" style={{ gap: '4px 12px', width: '100%', paddingTop: 2 }}>
+        <span className="lbl nowrap">CPU <span className="mono" style={{ color: 'var(--ink)' }}>{num(h?.cpu_percent, 0, '%')}</span></span>
+        <span className="lbl nowrap">内存 <span className="mono" style={{ color: 'var(--ink)' }}>{memPct === null ? '-' : `${memPct.toFixed(0)}%`}</span></span>
+        <span className="lbl nowrap">磁盘 <span className="mono" style={{ color: 'var(--ink)' }}>{disk ? `${pct(disk.used_gb, disk.total_gb).toFixed(0)}%` : '-'}</span></span>
         <span className="grow" />
-        <span className="mono" style={{ fontSize: 13, fontWeight: 500, color: s.status === 'online' && s.idle_device_count ? '#1B5E3A' : 'var(--muted)' }}>
+        <span className="mono nowrap" style={{ fontSize: 13, fontWeight: 550, color: s.status === 'online' && s.idle_device_count ? '#1B5E3A' : 'var(--muted)' }}>
           {s.status === 'online' ? `空闲 ${s.idle_device_count}/${s.device_count}` : STATUS_LOOK[s.status].name}
         </span>
       </div>
@@ -273,33 +278,38 @@ function ServerDetail({ id, groups, onChanged, onDeleted }: { id: number; groups
     { k: `内存${h?.memory_total_mb ? ` · ${gb(h.memory_total_mb, 0)} GB` : ''}`, v: h ? `${pct(h.memory_used_mb, h.memory_total_mb).toFixed(0)}%` : '-', p: h ? pct(h.memory_used_mb, h.memory_total_mb) : 0, sub: '' },
     { k: `磁盘 ${disk?.path ?? ''}`, v: disk ? `${pct(disk.used_gb, disk.total_gb).toFixed(0)}%` : '-', p: disk ? pct(disk.used_gb, disk.total_gb) : 0, sub: disk ? `${num(disk.used_gb)} / ${num(disk.total_gb)} GB` : '' },
   ]
+  const modelLine = s.models.join(' / ')
 
   return (
-    <aside className="card col" style={{ flex: '2 1 400px', minWidth: 0, position: 'sticky', top: 16 }}>
-      <div className="col" style={{ padding: '18px 18px 0', gap: 6 }}>
-        <div className="row">
-          <span className="dot" style={{ width: 10, height: 10, borderRadius: 5, background: STATUS_LOOK[s.status].dot }} />
-          <h2 className="mono grow ellipsis" style={{ fontSize: 18, fontWeight: 500 }}>{s.name}</h2>
-          {acc && <Badge bg={acc.bg} fg={acc.fg}>{acc.name} · {s.models.join(' / ')}</Badge>}
-        </div>
-        <div className="row">
-          <div className="lbl grow">
-            <span className="mono">{s.host}:{s.port}</span> · 主机名 <span className="mono">{s.hostname ?? '-'}</span> · Agent {s.agent_version ?? '-'} · {s.status === 'online' ? `${relTime(s.last_seen_at)}更新` : `${STATUS_LOOK[s.status].name}${s.last_seen_at ? ` · 最后在线 ${relTime(s.last_seen_at)}` : ''}`}
-          </div>
+    <aside className="card col detail-pane" style={{ flex: '2 1 400px', minWidth: 0 }}>
+      <div className="col" style={{ padding: '18px 18px 0', gap: 7 }}>
+        <div className="row" style={{ gap: 8 }}>
+          <span className="dot" style={{ width: 10, height: 10, background: STATUS_LOOK[s.status].dot }} title={STATUS_LOOK[s.status].name} />
+          <h2 className="mono grow ellipsis" style={{ fontSize: 17, fontWeight: 600 }} title={s.name}>{s.name}</h2>
+          {acc && <Badge bg={acc.bg} fg={acc.fg}>{acc.name}</Badge>}
           <button type="button" className="btn sm" onClick={refresh} disabled={refreshing}><IconRefresh />{refreshing ? '刷新中' : '立即刷新'}</button>
         </div>
+        {modelLine && (
+          <div className="lbl ellipsis" style={{ color: 'var(--ink-2)', fontWeight: 500 }} title={modelLine}>{modelLine}</div>
+        )}
+        <div className="lbl break-any">
+          <span className="mono">{s.host}:{s.port}</span> · 主机名 <span className="mono">{s.hostname ?? '-'}</span> · Agent <span className="mono">{s.agent_version ?? '-'}</span> · {s.status === 'online' ? `${relTime(s.last_seen_at)}更新` : `${STATUS_LOOK[s.status].name}${s.last_seen_at ? ` · 最后在线 ${relTime(s.last_seen_at)}` : ''}`}
+        </div>
         {s.last_error && s.status !== 'online' && <div className="notice err">最后错误：<span className="mono">{s.last_error}</span></div>}
-        {s.deploy?.status === 'failed' && <div className="notice err">Agent {s.deploy.action === 'upgrade' ? '升级' : '安装'}失败：{s.deploy.error}</div>}
-        <div className="row" style={{ gap: 20, marginTop: 4, alignItems: 'flex-start' }}>
+        {s.deploy?.status === 'failed' && <div className="notice err">Agent {s.deploy.action === 'upgrade' ? '升级' : '安装'}失败：<span className="mono">{s.deploy.error}</span></div>}
+        <div className="row" style={{ gap: 16, marginTop: 4, alignItems: 'flex-start' }}>
           {hostBars.map((b) => (
             <div key={b.k} className="col" style={{ flex: '1 1 0', gap: 4, minWidth: 0 }}>
-              <div className="row" style={{ justifyContent: 'space-between' }}><span className="lbl ellipsis">{b.k}</span><span className="mono" style={{ fontSize: 12 }}>{b.v}</span></div>
-              <div className="bar" style={{ height: 4 }}><div style={{ width: `${b.p}%`, background: 'var(--ink-2)' }} /></div>
-              {b.sub && <span className="lbl" style={{ fontSize: 11 }}>{b.sub}</span>}
+              <div className="row" style={{ justifyContent: 'space-between', gap: 6 }}>
+                <span className="lbl ellipsis" title={b.k}>{b.k}</span>
+                <span className="mono shrink-0" style={{ fontSize: 12 }}>{b.v}</span>
+              </div>
+              <div className="bar" style={{ height: 5 }}><div style={{ width: `${b.p}%`, background: 'var(--ink-2)' }} /></div>
+              {b.sub && <span className="lbl ellipsis" style={{ fontSize: 11 }}>{b.sub}</span>}
             </div>
           ))}
         </div>
-        <div className="row" style={{ gap: 20, marginTop: 8, borderBottom: '1px solid var(--border)' }} role="tablist">
+        <div className="row" style={{ gap: 18, marginTop: 6, borderBottom: '1px solid var(--border)', overflowX: 'auto' }} role="tablist">
           {([['cards', `加速卡 ${s.device_count}`], ['trend', '趋势'], ['agent', 'Agent'], ['attr', '属性']] as const).map(([k, n]) => (
             <button key={k} type="button" role="tab" aria-selected={tab === k} className={tab === k ? 'tab on' : 'tab'} onClick={() => setTab(k)}>{n}</button>
           ))}
@@ -310,25 +320,37 @@ function ServerDetail({ id, groups, onChanged, onDeleted }: { id: number; groups
           {s.devices.length === 0 && <div className="empty">{s.status === 'unknown' ? '尚未连通，连通后自动识别加速卡' : '没有加速卡数据'}</div>}
           {s.devices.map((d) => {
             const look = DEVICE_LOOK[deviceState(s, d)]
+            const procSummary = d.processes.map((p) => `PID ${p.pid ?? '-'} · ${p.user ?? '-'} · ${p.name ?? ''} (${gb(p.memory_mb)} GB)`).join('\n')
             return (
-              <div key={d.index} className="col" style={{ padding: '12px 18px', borderBottom: '1px solid var(--border-soft)', gap: 6 }}>
-                <div className="row wrap">
-                  <span className="mono" style={{ fontWeight: 500, width: 40 }}>卡 {d.index}</span>
+              <div key={d.index} className="col" style={{ padding: '11px 18px', borderBottom: '1px solid var(--border-soft)', gap: 5 }}>
+                <div className="row wrap" style={{ gap: '4px 8px' }}>
+                  <span className="mono shrink-0" style={{ fontWeight: 600, minWidth: 42 }}>卡 {d.index}</span>
                   <Badge bg={look.bg} fg={look.fg}>{d.job_id ? `平台任务 #${d.job_id}` : look.name}</Badge>
-                  {d.health && d.health.toUpperCase() !== 'OK' && <span className="lbl">健康：{d.health}</span>}
+                  {d.health && d.health.toUpperCase() !== 'OK' && <span className="lbl shrink-0" style={{ color: look.fg }}>健康：{d.health}</span>}
                   <span className="grow" />
-                  <span className="mono lbl">利用率 <span style={{ color: 'var(--ink)' }}>{num(d.utilization, 0, '%')}</span></span>
-                  <span className="mono lbl">{num(d.temperature, 0, '°C')}</span>
-                  <span className="mono lbl">{num(d.power_w, 0, 'W')}</span>
+                  <span className="mono lbl nowrap">利用率 <span style={{ color: 'var(--ink)', fontWeight: 500 }}>{num(d.utilization, 0, '%')}</span></span>
+                  <span className="mono lbl nowrap">{num(d.temperature, 0, '°C')}</span>
+                  <span className="mono lbl nowrap">{num(d.power_w, 0, 'W')}</span>
                 </div>
-                {d.health_detail && <div className="mono" style={{ fontSize: 12, color: look.fg }}>告警：{d.health_detail}</div>}
+                {d.health_detail && <div className="mono break-any" style={{ fontSize: 11.5, color: look.fg, background: look.bg, padding: '4px 8px', borderRadius: 5 }}>告警：{d.health_detail}</div>}
                 <div className="row" style={{ gap: 10 }}>
                   <div className="bar grow"><div style={{ width: `${pct(d.memory_used_mb, d.memory_total_mb)}%`, background: look.bd }} /></div>
-                  <span className="mono" style={{ fontSize: 12, width: 120, textAlign: 'right' }}>{gb(d.memory_used_mb)} / {gb(d.memory_total_mb, 0)} GB</span>
+                  <span className="mono shrink-0 nowrap" style={{ fontSize: 12, minWidth: 108, textAlign: 'right' }}>{gb(d.memory_used_mb)} / {gb(d.memory_total_mb, 0)} GB</span>
                 </div>
-                <div className="lbl mono">
-                  {d.bus_id ?? '-'} · {d.processes.length ? d.processes.map((p) => `PID ${p.pid ?? '-'} · ${p.user ?? '-'} · ${p.name ?? ''} ${gb(p.memory_mb)} GB`).join('；') : '无进程'}
-                </div>
+                {d.processes.length === 0 ? (
+                  <div className="lbl mono">{d.bus_id ?? '-'} · 无进程</div>
+                ) : (
+                  <div className="col" style={{ gap: 2 }} title={procSummary}>
+                    {d.processes.map((p, idx) => (
+                      <div key={`${p.pid ?? idx}-${idx}`} className="row lbl mono" style={{ gap: 6, fontSize: 11.5 }}>
+                        <span className="shrink-0">{idx === 0 ? `${d.bus_id ?? '-'} ·` : ''} PID {p.pid ?? '-'}</span>
+                        <span className="ellipsis" style={{ maxWidth: 110 }} title={p.user ?? undefined}>{p.user ?? '-'}</span>
+                        <span className="grow ellipsis" style={{ color: 'var(--ink-2)' }} title={p.name ?? undefined}>{p.name ?? ''}</span>
+                        <span className="shrink-0 nowrap">{gb(p.memory_mb)} GB</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )
           })}
@@ -352,7 +374,7 @@ function DeployBadge({ s }: { s: Server }) {
   if (d && d.status !== 'succeeded') {
     const look = DEPLOY_LOOK[d.status]
     const name = d.action === 'upgrade' ? look.name.replace('安装', '升级') : look.name
-    return <span title={d.error ?? undefined}><Badge bg={look.bg} fg={look.fg}>{name}</Badge></span>
+    return <Badge bg={look.bg} fg={look.fg} title={d.error ?? name}>{name}</Badge>
   }
   if (s.managed && s.agent_outdated) return <Badge bg="#FFF4D6" fg="#7A5300">Agent 待升级</Badge>
   return null
@@ -389,7 +411,7 @@ function AgentPanel({ s, onChanged }: { s: Server; onChanged: (s: Server | null)
       {rows.map(([k, v]) => (
         <div key={k} className="row" style={{ gap: 12, alignItems: 'baseline' }}>
           <span className="lbl" style={{ width: 110, flex: 'none' }}>{k}</span>
-          <span style={{ fontSize: 13, minWidth: 0, wordBreak: 'break-all' }}>{v}</span>
+          <span className="break-any" style={{ fontSize: 13, minWidth: 0 }}>{v}</span>
         </div>
       ))}
       {d && (
@@ -400,7 +422,7 @@ function AgentPanel({ s, onChanged }: { s: Server; onChanged: (s: Server | null)
       )}
       {!s.managed && <div className="notice">在“属性”里填写 SSH 用户后，就可以由中心服务安装和升级 Agent。</div>}
       {err && <div className="notice err">{err}</div>}
-      <div className="row" style={{ gap: 8 }}>
+      <div className="row wrap" style={{ gap: 8 }}>
         <button type="button" className="btn pri sm" onClick={run} disabled={!s.managed || active}>{active ? '执行中…' : verb}</button>
         {d?.log && <button type="button" className="btn sm" onClick={() => setShowLog(!showLog)}>{showLog ? '收起输出' : '查看输出'}</button>}
         {pkg.data?.auto_upgrade && s.managed && <span className="lbl">中心服务升级后会自动升级托管的 Agent</span>}
@@ -518,27 +540,31 @@ function AttrForm({ s, groups, onSaved, onDeleted }: { s: Server; groups: string
   return (
     <form className="col" style={{ padding: '16px 18px', gap: 14 }} onSubmit={(e) => { e.preventDefault(); save() }}>
       <div className="row" style={{ gap: 12 }}>
-        <label className="field grow" style={{ minWidth: 0 }}><span className="lbl">名称</span><input className="inp" value={name} onChange={(e) => setName(e.target.value)} required /></label>
-        <label className="field grow" style={{ minWidth: 0 }}><span className="lbl">地址</span><input className="inp mono" value={host} onChange={(e) => setHost(e.target.value)} required /></label>
+        <label className="field grow"><span className="lbl">名称</span><input className="inp" title={name} value={name} onChange={(e) => setName(e.target.value)} required /></label>
+        <label className="field grow"><span className="lbl">地址</span><input className="inp mono" title={host} value={host} onChange={(e) => setHost(e.target.value)} required /></label>
       </div>
       <div className="row" style={{ gap: 12 }}>
         <label className="field grow"><span className="lbl">运行组</span>
-          <input className="inp" list="group-options" value={group} onChange={(e) => setGroup(e.target.value)} placeholder="例如 训练组" />
+          <input className="inp" list="group-options" title={group} value={group} onChange={(e) => setGroup(e.target.value)} placeholder="例如 训练组" />
           <datalist id="group-options">{groups.map((g) => <option key={g} value={g} />)}</datalist>
         </label>
-        <label className="field grow"><span className="lbl">使用人</span><input className="inp" value={owner} onChange={(e) => setOwner(e.target.value)} /></label>
+        <label className="field grow"><span className="lbl">使用人</span><input className="inp" title={owner} value={owner} onChange={(e) => setOwner(e.target.value)} /></label>
       </div>
       <div className="field">
-        <span className="lbl">标签</span>
-        <div className="row wrap" style={{ gap: 6, minHeight: 36, border: '1px solid var(--control)', borderRadius: 6, padding: '4px 8px' }}>
+        <div className="row" style={{ justifyContent: 'space-between' }}>
+          <span className="lbl">标签{tags.length > 0 ? `（${tags.length}）` : ''}</span>
+          {tags.length > 6 && <button type="button" className="btn ghost sm" style={{ height: 22, padding: '0 6px', fontSize: 11.5 }} onClick={() => setTags([])}>清空全部</button>}
+        </div>
+        <div className="tag-editor">
           {tags.map((t) => (
-            <span key={t} className="tag">{t}
-              <button type="button" aria-label={`移除标签 ${t}`} onClick={() => setTags(tags.filter((x) => x !== t))} style={{ border: 0, background: 'none', cursor: 'pointer', color: 'var(--faint)', padding: '0 0 0 4px' }}>×</button>
+            <span key={t} className="tag" title={t}>
+              <span className="tag-text">{t}</span>
+              <button type="button" className="tag-del" aria-label={`移除标签 ${t}`} onClick={() => setTags(tags.filter((x) => x !== t))}>×</button>
             </span>
           ))}
-          <input aria-label="添加标签" placeholder="输入后回车添加" value={tagInput} onChange={(e) => setTagInput(e.target.value)}
+          <input aria-label="添加标签" placeholder={tags.length ? '继续添加…' : '输入后回车添加'} value={tagInput} onChange={(e) => setTagInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTag() } }} onBlur={addTag}
-            style={{ border: 0, outline: 'none', font: 'inherit', fontSize: 13, flexGrow: 1, minWidth: 100 }} />
+            style={{ border: 0, outline: 'none', font: 'inherit', fontSize: 13, flexGrow: 1, minWidth: 110, background: 'transparent' }} />
         </div>
       </div>
       <label className="field"><span className="lbl">备注</span><textarea className="inp" rows={2} value={note} onChange={(e) => setNote(e.target.value)} /></label>
@@ -611,35 +637,40 @@ function BulkEditDialog({ servers, groups, onClose, onDone }: { servers: Server[
     if (errors.length) setFailed(errors)
     else onDone()
   }
+  const namesList = servers.map((s) => s.name).join('、')
   return (
     <Modal title={`批量修改 ${servers.length} 台服务器`} onClose={onClose} width={520}>
       <form className="col" style={{ gap: 14 }} onSubmit={(e) => { e.preventDefault(); submit() }}>
-        <div className="lbl ellipsis">{servers.map((s) => s.name).join('、')}</div>
+        <div className="lbl line-clamp-2" title={namesList}>{namesList}</div>
         <div className="notice">留空的项保持不变。</div>
         <div className="row" style={{ gap: 12 }}>
-          <div className="field grow" style={{ minWidth: 0 }}><span className="lbl">运行组</span>
+          <div className="field grow"><span className="lbl">运行组</span>
             <input className="inp" aria-label="运行组" list="bulk-group-options" value={group} disabled={clear.group} onChange={(e) => setGroup(e.target.value)} placeholder="不修改" />
             <datalist id="bulk-group-options">{groups.map((g) => <option key={g} value={g} />)}</datalist>
             <label className="row lbl" style={{ gap: 6 }}><input type="checkbox" checked={clear.group} onChange={(e) => setClear({ ...clear, group: e.target.checked })} />清空运行组</label>
           </div>
-          <div className="field grow" style={{ minWidth: 0 }}><span className="lbl">使用人</span>
+          <div className="field grow"><span className="lbl">使用人</span>
             <input className="inp" aria-label="使用人" value={owner} disabled={clear.owner} onChange={(e) => setOwner(e.target.value)} placeholder="不修改" />
             <label className="row lbl" style={{ gap: 6 }}><input type="checkbox" checked={clear.owner} onChange={(e) => setClear({ ...clear, owner: e.target.checked })} />清空使用人</label>
           </div>
         </div>
         <div className="row" style={{ gap: 12 }}>
-          <label className="field grow" style={{ minWidth: 0 }}><span className="lbl">添加标签（逗号或空格分隔）</span><input className="inp" value={addTags} onChange={(e) => setAddTags(e.target.value)} /></label>
-          <label className="field grow" style={{ minWidth: 0 }}><span className="lbl">移除标签</span><input className="inp" value={removeTags} onChange={(e) => setRemoveTags(e.target.value)} /></label>
+          <label className="field grow"><span className="lbl">添加标签（逗号或空格分隔）</span><input className="inp" value={addTags} onChange={(e) => setAddTags(e.target.value)} /></label>
+          <label className="field grow"><span className="lbl">移除标签</span><input className="inp" value={removeTags} onChange={(e) => setRemoveTags(e.target.value)} /></label>
         </div>
         <div className="row" style={{ gap: 12 }}>
-          <label className="field grow" style={{ minWidth: 0 }}><span className="lbl">参与调度</span>
+          <label className="field grow"><span className="lbl">参与调度</span>
             <select className="inp" value={schedulable} onChange={(e) => setSchedulable(e.target.value as '' | 'yes' | 'no')}>
               <option value="">不修改</option><option value="yes">参与</option><option value="no">不参与</option>
             </select>
           </label>
-          <label className="field grow" style={{ minWidth: 0 }}><span className="lbl">SSH 用户（修改后需重新安装 Agent）</span><input className="inp mono" value={sshUser} onChange={(e) => setSshUser(e.target.value)} placeholder="不修改" /></label>
+          <label className="field grow"><span className="lbl">SSH 用户（修改后需重新安装 Agent）</span><input className="inp mono" value={sshUser} onChange={(e) => setSshUser(e.target.value)} placeholder="不修改" /></label>
         </div>
-        {failed.length > 0 && <div className="notice err">以下服务器修改失败：{failed.map((f) => <div key={f}>{f}</div>)}</div>}
+        {failed.length > 0 && (
+          <div className="notice err" style={{ maxHeight: 140, overflowY: 'auto' }}>
+            以下服务器修改失败：{failed.map((f) => <div key={f}>{f}</div>)}
+          </div>
+        )}
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn" onClick={failed.length ? onDone : onClose}>{failed.length ? '关闭' : '取消'}</button>
           <button type="submit" className="btn pri" disabled={busy}>{busy ? '保存中' : '保存'}</button>
@@ -751,7 +782,7 @@ function AddServerDialog({ groups, onClose, onAdded }: { groups: string[]; onClo
         ) : mode === 'import' ? (
           <div className="col" style={{ gap: 8 }}>
             <div className="row">
-              <span className="lbl grow">读取中心主机的 <span className="mono">{sshConfig.data?.path ?? '~/.ssh/config'}</span>，名称和 SSH 连接目标用 Host 别名</span>
+              <span className="lbl grow break-any">读取中心主机的 <span className="mono">{sshConfig.data?.path ?? '~/.ssh/config'}</span>，名称和 SSH 连接目标用 Host 别名</span>
               {importable.length > 0 && (
                 <button type="button" className="btn sm" onClick={() => setPicked(picked.size === importable.length ? new Set() : new Set(importable.map((h) => h.alias)))}>
                   {picked.size === importable.length ? '全不选' : '全选'}
@@ -760,15 +791,18 @@ function AddServerDialog({ groups, onClose, onAdded }: { groups: string[]; onClo
             </div>
             {sshConfig.error && <div className="notice err">{sshConfig.error}</div>}
             {sshConfig.data && sshConfig.data.hosts.length === 0 && <div className="notice">没有读到主机（不含通配符的 Host 条目）。</div>}
-            <div className="col" style={{ maxHeight: 240, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 6 }}>
-              {(sshConfig.data?.hosts ?? []).map((h) => (
-                <label key={h.alias} className="row" style={{ gap: 8, padding: '6px 10px', borderBottom: '1px solid var(--border-soft)', fontSize: 13, opacity: h.added ? 0.5 : 1 }}>
-                  <input type="checkbox" disabled={h.added} checked={picked.has(h.alias)} onChange={() => togglePick(h.alias)} />
-                  <span className="mono" style={{ width: 140 }}>{h.alias}</span>
-                  <span className="mono grow lbl">{h.user}@{h.hostname}{h.port !== 22 ? `:${h.port}` : ''}</span>
-                  {h.added && <span className="lbl">已添加</span>}
-                </label>
-              ))}
+            <div className="col" style={{ maxHeight: 240, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 7 }}>
+              {(sshConfig.data?.hosts ?? []).map((h) => {
+                const target = `${h.user}@${h.hostname}${h.port !== 22 ? `:${h.port}` : ''}`
+                return (
+                  <label key={h.alias} className="row" style={{ gap: 8, padding: '7px 10px', borderBottom: '1px solid var(--border-soft)', fontSize: 13, opacity: h.added ? 0.5 : 1 }}>
+                    <input type="checkbox" disabled={h.added} checked={picked.has(h.alias)} onChange={() => togglePick(h.alias)} style={{ flexShrink: 0 }} />
+                    <span className="mono ellipsis" style={{ flex: '0 0 150px' }} title={h.alias}>{h.alias}</span>
+                    <span className="mono grow lbl ellipsis" title={target}>{target}</span>
+                    {h.added && <span className="lbl shrink-0">已添加</span>}
+                  </label>
+                )
+              })}
             </div>
           </div>
         ) : (
@@ -781,17 +815,17 @@ function AddServerDialog({ groups, onClose, onAdded }: { groups: string[]; onClo
             <label className="field"><span className="lbl">默认 SSH 用户（行里没写用户时使用）</span><input className="inp mono" value={sshUser} onChange={(e) => setSshUser(e.target.value)} /></label>
             <div className="lbl">
               识别到 {good.length} 台{good.length ? `，其中 ${good.filter((g) => g.ssh_user).length} 台自动安装 Agent` : ''}
-              {bad.map((b) => <div key={b.line} style={{ color: '#A1281F' }}>第 {b.line} 行：{b.error}</div>)}
+              {bad.map((b) => <div key={b.line} style={{ color: 'var(--danger)' }}>第 {b.line} 行：{b.error}</div>)}
             </div>
           </>
         )}
         <div className="row" style={{ gap: 12 }}>
-          <label className="field grow" style={{ minWidth: 0 }}><span className="lbl">运行组</span>
+          <label className="field grow"><span className="lbl">运行组</span>
             <input className="inp" list="add-group-options" value={group} onChange={(e) => setGroup(e.target.value)} />
             <datalist id="add-group-options">{groups.map((g) => <option key={g} value={g} />)}</datalist>
           </label>
-          <label className="field grow" style={{ minWidth: 0 }}><span className="lbl">使用人</span><input className="inp" value={owner} onChange={(e) => setOwner(e.target.value)} /></label>
-          <label className="field" style={{ flex: '0 0 100px', minWidth: 0 }}><span className="lbl">Agent 端口</span><input className="inp mono" style={{ width: '100%' }} value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" /></label>
+          <label className="field grow"><span className="lbl">使用人</span><input className="inp" value={owner} onChange={(e) => setOwner(e.target.value)} /></label>
+          <label className="field" style={{ flex: '0 0 100px' }}><span className="lbl">Agent 端口</span><input className="inp mono" value={port} onChange={(e) => setPort(e.target.value)} inputMode="numeric" /></label>
         </div>
         {anySsh && (
           <>
@@ -814,7 +848,11 @@ function AddServerDialog({ groups, onClose, onAdded }: { groups: string[]; onClo
         )}
         {!anySsh && <div className="notice">不填 SSH 用户时需要先在服务器上手动安装 Agent，添加后会立即尝试连接。</div>}
         {err && <div className="notice err">{err}</div>}
-        {failed.length > 0 && <div className="notice err">以下服务器没有添加：{failed.map((f) => <div key={f}>{f}</div>)}</div>}
+        {failed.length > 0 && (
+          <div className="notice err" style={{ maxHeight: 140, overflowY: 'auto' }}>
+            以下服务器没有添加：{failed.map((f) => <div key={f}>{f}</div>)}
+          </div>
+        )}
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn" onClick={onClose}>{failed.length ? '关闭' : '取消'}</button>
           <button type="submit" className="btn pri" disabled={busy || (mode === 'one' ? !host.trim() : mode === 'batch' ? !good.length || bad.length > 0 : !picked.size)}>

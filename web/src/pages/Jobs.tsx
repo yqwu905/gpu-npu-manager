@@ -5,7 +5,7 @@ import { jobsApi } from '../api/jobs'
 import { serversApi } from '../api/servers'
 import type { Accelerator, Job, JobStatus, Server } from '../api/types'
 import { Badge, ErrorNote, MockBadge, Modal } from '../components/common'
-import { IconPlus } from '../components/Icons'
+import { IconPlus, IconSearch } from '../components/Icons'
 import { ACC_LOOK, JOB_LOOK, clock, duration, schedulableIdle } from '../lib/format'
 import { useMock, usePoll } from '../lib/hooks'
 import {
@@ -34,9 +34,25 @@ function sortJobs(js: Job[]): Job[] {
     || (a.status === 'queued' && b.status === 'queued' ? b.priority - a.priority || a.created_at.localeCompare(b.created_at) : b.id - a.id))
 }
 
-function allocText(j: Job): string {
+/** 连续卡号压缩为区间（如 [0,1,2,3,4,5,6,7] -> 0-7），减少多卡任务在表格里的横向占用 */
+function compactDevices(indices: number[]): string {
+  if (indices.length <= 3) return indices.join(',')
+  const sorted = [...indices].sort((a, b) => a - b)
+  const parts: string[] = []
+  let start = sorted[0], prev = sorted[0]
+  for (let i = 1; i <= sorted.length; i++) {
+    const cur = sorted[i]
+    if (cur === prev + 1) { prev = cur; continue }
+    parts.push(prev - start >= 2 ? `${start}-${prev}` : prev > start ? `${start},${prev}` : `${start}`)
+    start = prev = cur
+  }
+  return parts.join(',')
+}
+
+function allocText(j: Job, compact = false): string {
   if (!j.assigned_server_name) return j.server_id ? `指定服务器 #${j.server_id}` : '-'
-  return `${j.assigned_server_name} [${j.device_indices.join(',')}]`
+  const devs = compact ? compactDevices(j.device_indices) : j.device_indices.join(',')
+  return `${j.assigned_server_name} [${devs}]`
 }
 
 function timeText(j: Job): [string, string] {
@@ -113,7 +129,7 @@ export default function JobsPage() {
           <div className="lbl" style={{ marginTop: 4 }}>按优先级从高到低、提交时间从早到晚调度；任务只在单台服务器内分配卡；可被抢占的任务会给放不下的更高优先级任务让出卡</div>
         </div>
         <MockBadge show={mock} what="任务" />
-        {schedMock ? <span className="lbl" title="后端暂未提供调度模式接口，由服务端环境变量 GNM_SCHEDULE_STRICT 配置">调度模式由服务端配置</span> : (
+        {schedMock ? <span className="lbl shrink-0" title="后端暂未提供调度模式接口，由服务端环境变量 GNM_SCHEDULE_STRICT 配置">调度模式由服务端配置</span> : (
         <button type="button" className="btn" aria-pressed={strict} disabled={!sched.data}
           onClick={async () => sched.setData(await jobsApi.setScheduler({ strict_order: !strict }))}
           title="开启后排在前面的任务放不下时，后面的任务也不会先运行">
@@ -125,38 +141,44 @@ export default function JobsPage() {
         <button className="btn pri" type="button" onClick={() => { setCopyFrom(null); setShowSubmit(true) }}><IconPlus />提交任务</button>
       </header>
 
-      <div className="row wrap" style={{ gap: 6 }}>
-        {TABS.map((t) => (
-          <button key={t} type="button" className={tab === t ? 'chip on' : 'chip'} onClick={() => setTab(t)} aria-pressed={tab === t}>
-            {t === 'all' ? '全部' : JOB_LOOK[t].name} <span className="mono" style={{ opacity: 0.7, marginLeft: 2 }}>{t === 'all' ? filtered.length : filtered.filter((j) => j.status === t).length}</span>
-          </button>
-        ))}
-        <span className="grow" />
-        <input className="inp" type="search" aria-label="搜索任务" placeholder="搜索名称/命令/提交人/#ID" value={search}
-          onChange={(e) => setSearch(e.target.value)} style={{ width: 220 }} />
-        <select className="inp" aria-label="提交人" value={submitter} onChange={(e) => setSubmitter(e.target.value)}>
-          <option value="">全部提交人</option>
-          {submitters.map((s) => <option key={s}>{s}</option>)}
-        </select>
-        <select className="inp" aria-label="运行组" value={group} onChange={(e) => setGroup(e.target.value)}>
-          <option value="">全部运行组</option>
-          {groups.map((g) => <option key={g}>{g}</option>)}
-        </select>
-        <select className="inp" aria-label="运行服务器" value={server} onChange={(e) => setServer(e.target.value)}>
-          <option value="">全部服务器</option>
-          {serverNames.map((s) => <option key={s}>{s}</option>)}
-        </select>
-        <select className="inp" aria-label="是否可被抢占" value={preempt} onChange={(e) => setPreempt(e.target.value as '' | 'yes' | 'no')}>
-          <option value="">全部任务</option>
-          <option value="yes">可被抢占</option>
-          <option value="no">不可被抢占</option>
-        </select>
-        {filtering && <button type="button" className="btn sm" onClick={clearFilters}>清除筛选</button>}
-      </div>
+      <section className="card col" style={{ padding: '12px 16px', gap: 10 }}>
+        <div className="filter-bar">
+          <label className="search" style={{ flex: '1 1 220px' }}>
+            <IconSearch />
+            <input type="search" aria-label="搜索任务" placeholder="搜索名称 / 命令 / 提交人 / #ID" value={search}
+              onChange={(e) => setSearch(e.target.value)} />
+          </label>
+          <select className="inp filter-select" aria-label="提交人" title={submitter || '全部提交人'} value={submitter} onChange={(e) => setSubmitter(e.target.value)}>
+            <option value="">全部提交人</option>
+            {submitters.map((s) => <option key={s}>{s}</option>)}
+          </select>
+          <select className="inp filter-select" aria-label="运行组" title={group || '全部运行组'} value={group} onChange={(e) => setGroup(e.target.value)}>
+            <option value="">全部运行组</option>
+            {groups.map((g) => <option key={g}>{g}</option>)}
+          </select>
+          <select className="inp filter-select" aria-label="运行服务器" title={server || '全部服务器'} value={server} onChange={(e) => setServer(e.target.value)}>
+            <option value="">全部服务器</option>
+            {serverNames.map((s) => <option key={s}>{s}</option>)}
+          </select>
+          <select className="inp filter-select" aria-label="是否可被抢占" value={preempt} onChange={(e) => setPreempt(e.target.value as '' | 'yes' | 'no')}>
+            <option value="">全部任务</option>
+            <option value="yes">可被抢占</option>
+            <option value="no">不可被抢占</option>
+          </select>
+          {filtering && <button type="button" className="btn sm" onClick={clearFilters}>清除筛选</button>}
+        </div>
+        <div className="row wrap" style={{ gap: 6, paddingTop: 9, borderTop: '1px solid var(--border-soft)' }}>
+          {TABS.map((t) => (
+            <button key={t} type="button" className={tab === t ? 'chip on' : 'chip'} onClick={() => setTab(t)} aria-pressed={tab === t}>
+              {t === 'all' ? '全部' : JOB_LOOK[t].name} <span className="mono" style={{ opacity: 0.72, marginLeft: 2 }}>{t === 'all' ? filtered.length : filtered.filter((j) => j.status === t).length}</span>
+            </button>
+          ))}
+        </div>
+      </section>
       <ErrorNote error={jobs.error || actionErr} />
 
       <div className="split">
-        <section className="card table-box" style={{ flex: '3 1 680px', minWidth: 0 }}>
+        <section className="card table-box" style={{ flex: '3 1 620px', minWidth: 0 }}>
           <table className="tbl">
             <thead><tr>
               <th>ID</th><th>任务</th><th>状态</th><th className="num">卡数</th><th>运行组 / 分配</th><th style={{ textAlign: 'center' }}>优先级</th><th>时间</th><th className="num">操作</th>
@@ -165,16 +187,22 @@ export default function JobsPage() {
               {rows.map((j) => {
                 const [t1, t2] = timeText(j)
                 const stop = (fn: () => void) => (e: React.MouseEvent) => { e.stopPropagation(); fn() }
+                const subLine = `${j.submitter ?? '-'}${j.preemptible ? ' · 可被抢占' : ''}`
+                const fullAlloc = allocText(j, false)
+                const shortAlloc = allocText(j, true)
                 return (
                   <tr key={j.id} className={j.id === selId ? 'click sel' : 'click'} onClick={() => setParams({ id: String(j.id) }, { replace: true })}>
                     <td className="mono lbl">#{j.id}</td>
-                    <td style={{ maxWidth: 220 }}>
-                      <div className="ellipsis" style={{ fontWeight: 500 }}>{j.name}</div>
-                      <div className="lbl">{j.submitter ?? '-'}{j.preemptible ? ' · 可被抢占' : ''}</div>
+                    <td style={{ maxWidth: 210 }}>
+                      <div className="ellipsis" style={{ fontWeight: 550 }} title={j.name}>{j.name}</div>
+                      <div className="lbl ellipsis" title={subLine}>{subLine}</div>
                     </td>
                     <td><Badge bg={JOB_LOOK[j.status].bg} fg={JOB_LOOK[j.status].fg}>{JOB_LOOK[j.status].name}</Badge></td>
                     <td className="mono num">{j.num_devices}</td>
-                    <td><div>{j.group ?? '-'}</div><div className="lbl mono">{allocText(j)}</div></td>
+                    <td style={{ maxWidth: 200 }}>
+                      <div className="ellipsis" title={j.group ?? undefined}>{j.group ?? '-'}</div>
+                      <div className="lbl mono ellipsis" title={fullAlloc}>{shortAlloc}</div>
+                    </td>
                     <td style={{ textAlign: 'center' }}>
                       {j.status === 'queued' ? (
                         <span className="stepper">
@@ -401,55 +429,65 @@ function JobDetail({ j }: { j: Job }) {
     { name: '启动', t: j.started_at, on: !!j.started_at },
     { name: '结束', t: j.finished_at, on: done },
   ]
+  const envEntries = Object.entries(j.env)
+
   return (
-    <aside className="card col" style={{ flex: '2 1 380px', minWidth: 0 }}>
+    <aside className="card col detail-pane" style={{ flex: '2 1 380px', minWidth: 0 }}>
       <div className="col" style={{ padding: 18, gap: 6, borderBottom: '1px solid var(--border-soft)' }}>
         <div className="row">
-          <span className="mono lbl">#{j.id}</span>
-          <h2 className="grow ellipsis" style={{ fontSize: 17 }}>{j.name}</h2>
+          <span className="mono lbl shrink-0">#{j.id}</span>
+          <h2 className="grow ellipsis" style={{ fontSize: 16.5 }} title={j.name}>{j.name}</h2>
           <Badge bg={JOB_LOOK[j.status].bg} fg={JOB_LOOK[j.status].fg}>{JOB_LOOK[j.status].name}</Badge>
         </div>
-        <div className="lbl">
+        <div className="lbl break-any">
           {j.submitter ?? '-'} 提交 · {j.group ?? '不限运行组'}{j.accelerator ? ` · 仅 ${ACC_LOOK[j.accelerator].name}` : ''} · {j.num_devices} 卡 · 优先级 {j.priority}
           {j.preemptible ? ` · 可被抢占${j.preempt_count ? `（已被抢占 ${j.preempt_count} 次）` : ''}` : ''}
           {j.requeued_from ? ` · 由 #${j.requeued_from} 重新排队` : ''}
         </div>
         {j.status === 'queued' && (
-          <div className="notice warn" style={{ marginTop: 6 }}>
+          <div className="notice warn" style={{ marginTop: 4 }}>
             队列第 {j.queue_position ?? '-'} 位{j.wait_reason ? `：${j.wait_reason}` : '，等待有足够空闲卡的服务器'}
           </div>
         )}
-        {j.error && <div className={j.status === 'queued' ? 'notice warn' : 'notice err'} style={{ marginTop: 6 }}>{j.error}</div>}
+        {j.error && <div className={j.status === 'queued' ? 'notice warn' : 'notice err'} style={{ marginTop: 4 }}>{j.error}</div>}
       </div>
-      <div style={{ padding: '14px 18px', display: 'grid', gridTemplateColumns: '88px minmax(0, 1fr)', gap: '8px 12px', fontSize: 13, borderBottom: '1px solid var(--border-soft)' }}>
-        <span className="lbl">命令</span><code className="mono" style={{ background: 'var(--bg)', padding: '6px 8px', borderRadius: 4, fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{j.command}</code>
-        <span className="lbl">工作目录</span><span className="mono" style={{ fontSize: 12, wordBreak: 'break-all' }}>{j.workdir ?? 'Agent 运行用户的家目录'}</span>
-        <span className="lbl">环境变量</span><span className="mono" style={{ fontSize: 12, whiteSpace: 'pre-line' }}>{Object.entries(j.env).map(([k, v]) => `${k}=${v}`).join('\n') || '-'}</span>
-        <span className="lbl">分配</span><span className="mono" style={{ fontSize: 12 }}>{allocText(j)}</span>
-        <span className="lbl">可见卡号</span><span className="mono" style={{ fontSize: 12 }}>{j.device_indices.length ? j.device_indices.join(',') : '-'}</span>
-        <span className="lbl">PID / 退出码</span><span className="mono" style={{ fontSize: 12 }}>{j.pid ?? '-'} / {j.exit_code ?? '-'}</span>
+      <div style={{ padding: '14px 18px', display: 'grid', gridTemplateColumns: '84px minmax(0, 1fr)', gap: '9px 12px', fontSize: 13, borderBottom: '1px solid var(--border-soft)', alignItems: 'baseline' }}>
+        <span className="lbl">命令</span>
+        <pre className="code-block">{j.command}</pre>
+        <span className="lbl">工作目录</span>
+        <span className="mono break-any" style={{ fontSize: 12 }}>{j.workdir ?? 'Agent 运行用户的家目录'}</span>
+        <span className="lbl">环境变量</span>
+        {envEntries.length ? (
+          <pre className="code-block">{envEntries.map(([k, v]) => `${k}=${v}`).join('\n')}</pre>
+        ) : <span className="mono" style={{ fontSize: 12 }}>-</span>}
+        <span className="lbl">分配</span>
+        <span className="mono break-any" style={{ fontSize: 12 }}>{allocText(j)}</span>
+        <span className="lbl">可见卡号</span>
+        <span className="mono break-any" style={{ fontSize: 12 }}>{j.device_indices.length ? j.device_indices.join(', ') : '-'}</span>
+        <span className="lbl">PID / 退出码</span>
+        <span className="mono" style={{ fontSize: 12 }}>{j.pid ?? '-'} / {j.exit_code ?? '-'}</span>
       </div>
       <div className="row" style={{ padding: '14px 18px', gap: 0, borderBottom: '1px solid var(--border-soft)', alignItems: 'flex-start' }}>
         {steps.map((s, i) => (
           <div key={s.name} className="col" style={{ flex: '1 1 0', gap: 6 }}>
             <div className="row" style={{ gap: 0 }}>
-              <span className="dot" style={{ width: 10, height: 10, borderRadius: 5, background: s.on ? 'var(--accent)' : 'var(--control)' }} />
+              <span className="dot" style={{ width: 10, height: 10, background: s.on ? 'var(--accent)' : 'var(--control)' }} />
               {i < steps.length - 1 && <span className="grow" style={{ height: 2, background: steps[i + 1].on ? 'var(--accent)' : 'var(--control)' }} />}
             </div>
-            <span style={{ fontSize: 12, fontWeight: 500 }}>{s.name}</span>
+            <span style={{ fontSize: 12, fontWeight: 550 }}>{s.name}</span>
             <span className="lbl mono" style={{ fontSize: 11 }}>{s.on ? clock(s.t) : i === 1 && j.status === 'queued' ? '排队中' : '-'}</span>
           </div>
         ))}
       </div>
       <div className="col" style={{ padding: '14px 18px 18px', gap: 8 }}>
         <div className="row">
-          <span className="grow" style={{ fontWeight: 500 }}>日志</span>
+          <span className="grow" style={{ fontWeight: 550 }}>日志</span>
           {logState.headOffset > 0 && (
-            <button type="button" className="btn sm" disabled={loadingOlder} onClick={loadOlder}>
+            <button type="button" className="btn sm shrink-0" disabled={loadingOlder} onClick={loadOlder}>
               {loadingOlder ? '加载中…' : '加载更早'}
             </button>
           )}
-          <label className="row" style={{ gap: 6, fontSize: 13, color: 'var(--ink-2)' }}>
+          <label className="row shrink-0" style={{ gap: 6, fontSize: 13, color: 'var(--ink-2)', cursor: 'pointer' }}>
             <input type="checkbox" checked={follow} onChange={(e) => toggleFollow(e.target.checked)} />跟随最新输出
           </label>
         </div>
@@ -523,15 +561,19 @@ function SubmitDrawer({ from, onClose, onSubmitted }: { from?: Job | null; onClo
 
   return (
     <Modal title={from ? `复制任务 #${from.id}` : '提交任务'} onClose={onClose} drawer>
-      <form className="col" style={{ gap: 14, flexGrow: 1 }} onSubmit={(e) => { e.preventDefault(); submit() }}>
+      <form className="col" style={{ gap: 14, flexGrow: 1, minWidth: 0 }} onSubmit={(e) => { e.preventDefault(); submit() }}>
         <label className="field"><span className="lbl">名称（不填则取命令第一行）</span><input className="inp" value={name} onChange={(e) => setName(e.target.value)} autoFocus /></label>
         <label className="field"><span className="lbl">命令</span><textarea className="inp mono" rows={3} style={{ fontSize: 13 }} value={command} onChange={(e) => setCommand(e.target.value)} placeholder="bash scripts/train.sh --config configs/v4.yaml" required /></label>
         <label className="field"><span className="lbl">工作目录（不填为 Agent 运行用户的家目录）</span><input className="inp mono" style={{ fontSize: 13 }} value={workdir} onChange={(e) => setWorkdir(e.target.value)} placeholder="/data/projects/xxx" /></label>
         <label className="field"><span className="lbl">环境变量（每行一个 KEY=VALUE）</span><textarea className="inp mono" rows={2} style={{ fontSize: 13 }} value={env} onChange={(e) => setEnv(e.target.value)} /></label>
         <div className="field">
-          <span className="lbl">运行组</span>
-          <div className="seg-group">
-            {groupNames.map((n) => <button key={n} type="button" className={g === n ? 'seg on' : 'seg'} onClick={() => { setGroup(n); setServerId('') }}>{n}</button>)}
+          <span className="lbl">运行组{groupNames.length > 4 ? `（共 ${groupNames.length} 个）` : ''}</span>
+          <div className="seg-group" style={groupNames.length > 4 ? { maxHeight: 108, overflowY: 'auto' } : undefined}>
+            {groupNames.map((n) => (
+              <button key={n} type="button" title={n} className={g === n ? 'seg on' : 'seg'} onClick={() => { setGroup(n); setServerId('') }}>
+                {n}
+              </button>
+            ))}
             <button type="button" className={g === '' ? 'seg on' : 'seg'} onClick={() => { setGroup(''); setServerId('') }}>不限</button>
           </div>
         </div>
@@ -544,36 +586,39 @@ function SubmitDrawer({ from, onClose, onSubmitted }: { from?: Job | null; onClo
           </div>
         </div>
         <div className="row" style={{ gap: 12, alignItems: 'flex-end' }}>
-          <div className="field">
+          <div className="field shrink-0">
             <span className="lbl">卡数</span>
             <span className="stepper" style={{ height: 36 }}>
-              <button type="button" aria-label="减少卡数" style={{ width: 36, height: 36 }} onClick={() => setCount(Math.max(0, count - 1))}>−</button>
+              <button type="button" aria-label="减少卡数" style={{ width: 34, height: 36 }} onClick={() => setCount(Math.max(0, count - 1))}>−</button>
               <input aria-label="卡数" inputMode="numeric" value={count} onFocus={(e) => e.target.select()}
                 onChange={(e) => setCount(Math.min(16, Number(e.target.value.replace(/\D/g, '')) || 0))}
-                style={{ width: 40, height: 36, border: 0, textAlign: 'center', font: 'inherit', fontFamily: 'var(--mono)', fontWeight: 500 }} />
-              <button type="button" aria-label="增加卡数" style={{ width: 36, height: 36 }} onClick={() => setCount(Math.min(16, count + 1))}>+</button>
+                style={{ width: 38, height: 36, border: 0, textAlign: 'center', font: 'inherit', fontFamily: 'var(--mono)', fontWeight: 550 }} />
+              <button type="button" aria-label="增加卡数" style={{ width: 34, height: 36 }} onClick={() => setCount(Math.min(16, count + 1))}>+</button>
             </span>
           </div>
-          <label className="field grow"><span className="lbl">指定服务器（可选）</span>
+          <label className="field grow">
+            <span className="lbl">指定服务器（可选）</span>
             <select className="inp" value={serverId} onChange={(e) => setServerId(e.target.value)}>
               <option value="">由调度器选择</option>
               {inGroup.map((s) => <option key={s.id} value={s.id}>{s.name}（空闲 {schedulableIdle(s)}）</option>)}
             </select>
           </label>
-          <label className="field" style={{ width: 90 }}><span className="lbl">优先级</span><input className="inp mono" value={priority} onChange={(e) => setPriority(e.target.value)} inputMode="numeric" /></label>
+          <label className="field shrink-0" style={{ width: 82 }}><span className="lbl">优先级</span><input className="inp mono" value={priority} onChange={(e) => setPriority(e.target.value)} inputMode="numeric" /></label>
         </div>
-        <label className="row" style={{ gap: 8, fontSize: 13, alignItems: 'flex-start' }}>
-          <input type="checkbox" checked={preemptible} onChange={(e) => setPreemptible(e.target.checked)} style={{ marginTop: 3 }} />
+        <label className="row" style={{ gap: 8, fontSize: 13, alignItems: 'flex-start', cursor: 'pointer' }}>
+          <input type="checkbox" checked={preemptible} onChange={(e) => setPreemptible(e.target.checked)} style={{ marginTop: 3, flexShrink: 0 }} />
           <span>可被抢占<span className="lbl" style={{ display: 'block' }}>运行中遇到放不下的更高优先级任务时，进程被终止、让出卡并重新排队；有空闲卡后自动重新运行（从头运行，需要断点续跑请在命令里自行加载检查点）</span></span>
         </label>
         <div className={ok ? 'notice ok' : 'notice warn'}>
-          <div style={{ fontWeight: 500 }}>{hint}</div>
-          <div className="lbl" style={{ color: 'inherit', marginTop: 4 }}>{gName}可调度空闲卡：{inGroup.map((s) => `${s.name} ${schedulableIdle(s)}`).join('、') || '无'}</div>
+          <div className="break-any" style={{ fontWeight: 550 }}>{hint}</div>
+          <div className="lbl break-any" style={{ color: 'inherit', marginTop: 4, maxHeight: 72, overflowY: 'auto' }}>
+            {gName}可调度空闲卡：{inGroup.map((s) => `${s.name} (${schedulableIdle(s)})`).join('、') || '无'}
+          </div>
         </div>
         <label className="field"><span className="lbl">提交人</span><input className="inp" value={submitter} onChange={(e) => setSubmitter(e.target.value)} /></label>
         {err && <div className="notice err">{err}</div>}
         <div className="grow" />
-        <div className="row" style={{ justifyContent: 'flex-end' }}>
+        <div className="row" style={{ justifyContent: 'flex-end', position: 'sticky', bottom: -22, margin: '0 -24px -22px', padding: '12px 24px', background: 'var(--surface)', borderTop: '1px solid var(--border-soft)' }}>
           <button type="button" className="btn" onClick={onClose}>取消</button>
           <button type="submit" className="btn pri" disabled={busy || !command.trim()}>{busy ? '提交中' : '提交到队列'}</button>
         </div>

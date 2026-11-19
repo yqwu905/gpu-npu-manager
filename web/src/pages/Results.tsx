@@ -4,7 +4,7 @@ import { ApiError } from '../api/client'
 import { resultsApi } from '../api/results'
 import { serversApi } from '../api/servers'
 import type { EvalConfig, EvalConfigBody, Evaluation, Evaluator, MetricKind, Project, ResultSet, Sample } from '../api/types'
-import { Badge, ErrorNote, MockBadge, Modal, SampleImage, Switch } from '../components/common'
+import { Badge, ErrorNote, MockBadge, Modal, SampleImage, Switch, TagList } from '../components/common'
 import { EVAL_LOOK, relTime } from '../lib/format'
 import { useMock, usePoll } from '../lib/hooks'
 
@@ -46,6 +46,8 @@ export function sampleKind(items: (Sample | null | undefined)[]): MetricKind | n
   return null
 }
 
+const MAX_FILTER_TAGS = 10
+
 export default function ResultsPage() {
   const navigate = useNavigate()
   const [sel, setSel] = useState<number[]>([])
@@ -55,6 +57,7 @@ export default function ResultsPage() {
   const [editFor, setEditFor] = useState<ResultSet | null>(null)
   const [showProjects, setShowProjects] = useState(false)
   const [showConfigs, setShowConfigs] = useState(false)
+  const [showAllTags, setShowAllTags] = useState(false)
   // 筛选：项目（'' 全部，'0' 未归档）、标签（需全部包含）、名称关键字
   const [project, setProject] = useState('')
   const [tagSel, setTagSel] = useState<string[]>([])
@@ -83,6 +86,12 @@ export default function ResultsPage() {
 
   const list = sets.data ?? []
   const evs = evaluators.data ?? []
+  const allTags = tags.data ?? []
+  const tagCollapsible = allTags.length > MAX_FILTER_TAGS + 1
+  const visibleTags = !tagCollapsible || showAllTags
+    ? allTags
+    : allTags.filter((t, idx) => idx < MAX_FILTER_TAGS || tagSel.includes(t.tag))
+  const hiddenTagCount = allTags.length - visibleTags.length
   // 只显示至少一个结果集有值的指标列
   const metricDefs = evs.filter((m) => list.some((r) => typeof r.metrics[m.name] === 'number'))
   const best = Object.fromEntries(metricDefs.map((m) => {
@@ -96,7 +105,7 @@ export default function ResultsPage() {
   return (
     <main className="main">
       <header className="page-head">
-        <div className="grow">
+        <div className="grow" style={{ minWidth: 240 }}>
           <h1>结果与评测</h1>
           <div className="lbl" style={{ marginTop: 4 }}>结果集留在产生它的服务器上，通过 Agent 读取；一个结果集是一个目录：有 predictions.jsonl 时按它读取，没有时把目录里的每个图片或 .txt 当作一个样本</div>
         </div>
@@ -106,25 +115,39 @@ export default function ResultsPage() {
         <button className="btn pri" type="button" onClick={() => setShowReg(true)}>登记结果集</button>
       </header>
 
-      <div className="row wrap" style={{ gap: 10 }}>
-        <select className="inp" aria-label="按项目筛选" value={project} onChange={(e) => setProject(e.target.value)}>
-          <option value="">全部项目</option>
-          <option value="0">未归档</option>
-          {(projects.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}（{p.result_count}）</option>)}
-        </select>
-        <input className="inp" aria-label="按名称搜索" placeholder="搜索名称、路径、备注" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 220 }} />
-        {(tags.data ?? []).map((t) => {
-          const on = tagSel.includes(t.tag)
-          return (
-            <button key={t.tag} type="button" className={on ? 'chip on' : 'chip'} aria-pressed={on}
-              onClick={() => setTagSel(on ? tagSel.filter((x) => x !== t.tag) : [...tagSel, t.tag])}>
-              {t.tag} <span className="lbl">{t.count}</span>
-            </button>
-          )
-        })}
-        {(project !== '' || tagSel.length > 0 || q) && <button type="button" className="btn sm" onClick={() => { setProject(''); setTagSel([]); setQ('') }}>清除筛选</button>}
-        <span className="grow" />
-        <span className="lbl">共 {list.length} 个结果集 · 勾选两个以上即可对比</span>
+      <div className="card col" style={{ padding: '12px 14px', gap: 10 }}>
+        <div className="filter-bar">
+          <select className="inp filter-select" style={{ maxWidth: 220 }} aria-label="按项目筛选" value={project} onChange={(e) => setProject(e.target.value)}>
+            <option value="">全部项目</option>
+            <option value="0">未归档</option>
+            {(projects.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}（{p.result_count}）</option>)}
+          </select>
+          <input className="inp" aria-label="按名称搜索" placeholder="搜索名称、路径、备注" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 230 }} />
+          {(project !== '' || tagSel.length > 0 || q) && <button type="button" className="btn sm" onClick={() => { setProject(''); setTagSel([]); setQ('') }}>清除筛选</button>}
+          <span className="grow" />
+          <span className="lbl nowrap">共 {list.length} 个结果集 · 勾选两个以上即可对比</span>
+        </div>
+        {allTags.length > 0 && (
+          <div className="row wrap" style={{ gap: 6 }}>
+            <span className="lbl shrink-0" style={{ marginRight: 2 }}>标签：</span>
+            {visibleTags.map((t) => {
+              const on = tagSel.includes(t.tag)
+              return (
+                <button key={t.tag} type="button" className={on ? 'chip on' : 'chip'} aria-pressed={on}
+                  title={`${t.tag}（${t.count} 个结果集）`}
+                  onClick={() => setTagSel(on ? tagSel.filter((x) => x !== t.tag) : [...tagSel, t.tag])}>
+                  <span className="ellipsis">{t.tag}</span> <span className="lbl shrink-0">{t.count}</span>
+                </button>
+              )
+            })}
+            {tagCollapsible && (
+              <button type="button" className="chip chip-more" onClick={() => setShowAllTags((v) => !v)}
+                title={showAllTags ? '收起标签列表' : `展开其余 ${hiddenTagCount} 个标签`}>
+                {showAllTags ? '收起' : `+${hiddenTagCount} 更多标签`}
+              </button>
+            )}
+          </div>
+        )}
       </div>
       <ErrorNote error={sets.error} />
 
@@ -139,20 +162,24 @@ export default function ResultsPage() {
           <tbody>
             {list.map((r) => {
               const st = SET_LOOK[setState(r)]
+              const sub = `${String(r.meta.model ?? '-')} · ${String(r.meta.dataset ?? '-')}${r.note ? ` · ${r.note}` : ''}`
               return (
                 <tr key={r.id} className={focused?.id === r.id ? 'sel' : undefined}>
                   <td><input type="checkbox" aria-label={`选择 ${r.name}`} checked={sel.includes(r.id)} onChange={() => toggle(r.id)} style={{ width: 16, height: 16 }} /></td>
-                  <td>
-                    <div style={{ fontWeight: 500 }}>{r.name}</div>
-                    <div className="lbl">{String(r.meta.model ?? '-')} · {String(r.meta.dataset ?? '-')}{r.note ? ` · ${r.note}` : ''}</div>
+                  <td style={{ maxWidth: 340, minWidth: 220, whiteSpace: 'normal' }}>
+                    <div className="ellipsis" style={{ fontWeight: 550 }} title={r.name}>{r.name}</div>
+                    <div className="lbl line-clamp-2" style={{ marginTop: 2 }} title={sub}>{sub}</div>
                     {(r.project_name || r.tags.length > 0) && (
-                      <div className="row wrap" style={{ gap: 4, marginTop: 4 }}>
+                      <div className="row wrap" style={{ gap: 4, marginTop: 5 }}>
                         {r.project_name && <Badge bg="#DCE7FC" fg="#123F99">{r.project_name}</Badge>}
-                        {r.tags.map((t) => <Badge key={t} bg="#ECEDEB" fg="#3A4048">{t}</Badge>)}
+                        <TagList tags={r.tags} maxVisible={5} badge />
                       </div>
                     )}
                   </td>
-                  <td><div className="mono" style={{ fontSize: 12 }}>{r.server_name}</div><div className="lbl mono" title={r.path}>{shortPath(r.path)}</div></td>
+                  <td style={{ maxWidth: 220 }}>
+                    <div className="mono ellipsis" style={{ fontSize: 12 }} title={r.server_name}>{r.server_name}</div>
+                    <div className="lbl mono ellipsis" title={r.path}>{shortPath(r.path, 36)}</div>
+                  </td>
                   <td className="mono num">{r.sample_count?.toLocaleString() ?? '-'}</td>
                   <td className="lbl">{r.job_id ? <Link to={`/jobs?id=${r.job_id}`}>任务 #{r.job_id}</Link> : '手工登记'}</td>
                   {metricDefs.map((m) => {
@@ -184,30 +211,34 @@ export default function ResultsPage() {
       </section>
 
       {sel.length >= 2 && (
-        <div className="row wrap" style={{ gap: 12, padding: '12px 16px', borderRadius: 8, background: 'var(--ink)', color: '#FFFFFF' }}>
-          <span style={{ fontWeight: 500 }}>已选 {sel.length} 个结果集</span>
-          <span className="grow" style={{ color: '#C3C8CE', fontSize: 13 }}>{selSets.map((r) => r.name).join('、')}</span>
-          <button type="button" className="btn sm" onClick={() => setSel([])} style={{ background: 'transparent', color: '#FFFFFF', borderColor: 'var(--muted)' }}>清空</button>
-          <button type="button" className="btn pri sm" onClick={() => navigate(`/compare?ids=${sel.join(',')}`)}>对比所选</button>
+        <div className="sel-bar">
+          <span className="shrink-0" style={{ fontWeight: 550 }}>已选 {sel.length} 个结果集</span>
+          <span className="grow line-clamp-2" style={{ color: '#C3C8CE', fontSize: 13, minWidth: 180 }} title={selSets.map((r) => r.name).join('、')}>
+            {selSets.map((r) => r.name).join('、')}
+          </span>
+          <span className="row shrink-0" style={{ gap: 8, marginLeft: 'auto' }}>
+            <button type="button" className="btn sm" onClick={() => setSel([])} style={{ background: 'transparent', color: '#FFFFFF', borderColor: 'var(--muted)' }}>清空</button>
+            <button type="button" className="btn pri sm" onClick={() => navigate(`/compare?ids=${sel.join(',')}`)}>对比所选</button>
+          </span>
         </div>
       )}
 
       {focused && <SampleBrowser key={focused.id} r={focused} evaluators={evs} mock={mock} />}
 
       <section className="card" style={{ paddingBottom: 6 }}>
-        <div className="card-head">
+        <div className="card-head wrap" style={{ gap: 8 }}>
           <h2 className="grow">评测记录</h2>
           <span className="lbl">评测作为任务在评测服务器上运行（未指定时在结果所在服务器上），输出写到该服务器上结果目录的 eval/&lt;评测 ID&gt;/</span>
         </div>
         {(evals.data ?? []).map((e) => (
           <div key={e.id} className="list-row wrap" style={{ gap: 12, fontSize: 13 }}>
             <Badge bg={EVAL_LOOK[e.status].bg} fg={EVAL_LOOK[e.status].fg}>{EVAL_LOOK[e.status].name}</Badge>
-            <span className="col" style={{ width: 200, minWidth: 0 }}>
-              <span className="ellipsis" style={{ fontWeight: 500 }}>{e.result_set_name}</span>
-              <span className="lbl ellipsis" title={e.data_path}>{e.config_name ? `${e.config_name} · ` : ''}{e.server_name}</span>
+            <span className="col shrink-0" style={{ width: 210, minWidth: 0 }}>
+              <span className="ellipsis" style={{ fontWeight: 500 }} title={e.result_set_name}>{e.result_set_name}</span>
+              <span className="lbl ellipsis" title={`${e.config_name ? `${e.config_name} · ` : ''}${e.server_name} (${e.data_path})`}>{e.config_name ? `${e.config_name} · ` : ''}{e.server_name}</span>
             </span>
-            {e.job_id ? <Link className="mono" to={`/jobs?id=${e.job_id}`} style={{ width: 60 }}>#{e.job_id}</Link> : <span style={{ width: 60 }}>-</span>}
-            <span className="mono lbl grow" style={{ minWidth: 0, flexBasis: 240 }}>
+            {e.job_id ? <Link className="mono shrink-0" to={`/jobs?id=${e.job_id}`} style={{ width: 56 }}>#{e.job_id}</Link> : <span className="shrink-0" style={{ width: 56 }}>-</span>}
+            <span className="mono lbl grow break-any" style={{ minWidth: 220 }}>
               {e.error ?? (e.values
                 ? e.metrics.map((k) => `${metricLabel(evs, k)} ${fmtMetric(e.values?.[k])}`).join(' · ')
                 : `${e.metrics.map((k) => metricLabel(evs, k)).join(' · ')} · ${e.status === 'copying' ? `正在拷贝到 ${e.server_name}:${e.data_path}` : e.status === 'pending' ? '等待运行' : progressText(e)}`)}
@@ -217,11 +248,11 @@ export default function ResultsPage() {
               {!!e.num_skipped && <span style={{ color: '#8A4A06' }}> · 跳过 {e.num_skipped} 个样本</span>}
             </span>
             {e.status === 'running' && e.progress && e.progress.total > 0 && (
-              <div className="bar" style={{ width: 120 }} title={progressText(e)}>
+              <div className="bar shrink-0" style={{ width: 120 }} title={progressText(e)}>
                 <div style={{ width: `${(100 * e.progress.done) / e.progress.total}%`, background: 'var(--accent)' }} />
               </div>
             )}
-            <span className="lbl">{relTime(e.created_at)}</span>
+            <span className="lbl nowrap shrink-0">{relTime(e.created_at)}</span>
             {(e.status === 'succeeded' || e.status === 'failed') && (
               <button type="button" className="btn sm danger" onClick={() => removeEval(e)}>删除</button>
             )}
@@ -270,20 +301,22 @@ function SampleBrowser({ r, evaluators, mock }: { r: ResultSet; evaluators: Eval
     ...(hasRef && showRef ? [['ref_image', 'GT'] as const] : []),
   ].filter(([f]) => typeof s[f] === 'string')
 
+  const metaSummary = `meta.json：模型 ${String(r.meta.model ?? '-')} · 数据集 ${String(r.meta.dataset ?? '-')}${meta.map(([k, v]) => ` · ${k}=${typeof v === 'object' ? JSON.stringify(v) : String(v)}`).join('')}`
+
   return (
     <section className="card col">
       <div className="row wrap" style={{ padding: '16px 18px', gap: 12, borderBottom: '1px solid var(--border-soft)' }}>
-        <div className="grow">
-          <h2>样本浏览 · {r.name}</h2>
-          <div className="lbl" style={{ marginTop: 4 }}>
-            meta.json：模型 {String(r.meta.model ?? '-')} · 数据集 {String(r.meta.dataset ?? '-')}{meta.map(([k, v]) => ` · ${k}=${typeof v === 'object' ? JSON.stringify(v) : String(v)}`).join('')}
+        <div className="grow" style={{ minWidth: 220 }}>
+          <h2 className="ellipsis" title={`样本浏览 · ${r.name}`}>样本浏览 · {r.name}</h2>
+          <div className="lbl line-clamp-2" style={{ marginTop: 4 }} title={metaSummary}>
+            {metaSummary}
           </div>
         </div>
-        {hasLq && <span className="row" style={{ gap: 6 }}><span className="lbl">LQ</span><Switch on={showLq} onChange={setShowLq} label="并排显示 LQ" /></span>}
-        {hasRef && <span className="row" style={{ gap: 6 }}><span className="lbl">GT</span><Switch on={showRef} onChange={setShowRef} label="并排显示 GT" /></span>}
-        <span className="row" style={{ gap: 6 }}>
+        {hasLq && <span className="row shrink-0" style={{ gap: 6 }}><span className="lbl">LQ</span><Switch on={showLq} onChange={setShowLq} label="并排显示 LQ" /></span>}
+        {hasRef && <span className="row shrink-0" style={{ gap: 6 }}><span className="lbl">GT</span><Switch on={showRef} onChange={setShowRef} label="并排显示 GT" /></span>}
+        <span className="row shrink-0" style={{ gap: 6 }}>
           <button type="button" className="btn sm" aria-label="上一页" disabled={page === 0} onClick={() => setPage(page - 1)}>‹</button>
-          <span className="mono lbl">{page + 1} / {pages}</span>
+          <span className="mono lbl nowrap">{page + 1} / {pages}</span>
           <button type="button" className="btn sm" aria-label="下一页" disabled={page + 1 >= pages} onClick={() => setPage(page + 1)}>›</button>
         </span>
       </div>
@@ -302,9 +335,9 @@ function SampleBrowser({ r, evaluators, mock }: { r: ResultSet; evaluators: Eval
                   ))}
                 </div>
               ) : <div className="thumb" />}
-              <figcaption className="row" style={{ justifyContent: 'space-between', fontSize: 12 }}>
-                <span className="mono">{sid(s, i)}</span>
-                <span className="mono lbl">{metricKeys.slice(0, 1).map((k) => `${metricLabel(evaluators, k)} ${fmtMetric(s.metrics?.[k])}`).join('')}</span>
+              <figcaption className="row" style={{ justifyContent: 'space-between', fontSize: 12, gap: 8 }}>
+                <span className="mono ellipsis" title={sid(s, i)}>{sid(s, i)}</span>
+                <span className="mono lbl nowrap shrink-0">{metricKeys.slice(0, 1).map((k) => `${metricLabel(evaluators, k)} ${fmtMetric(s.metrics?.[k])}`).join('')}</span>
               </figcaption>
             </figure>
           ))}
@@ -321,16 +354,19 @@ function SampleBrowser({ r, evaluators, mock }: { r: ResultSet; evaluators: Eval
             <tbody>
               {items.map((s, i) => (
                 <tr key={sid(s, i)}>
-                  <td className="mono">{sid(s, i)}</td>
+                  <td className="mono" style={{ maxWidth: 210 }}><div className="ellipsis" title={sid(s, i)}>{sid(s, i)}</div></td>
                   {kind === 'text' && (
                     <>
                       {hasLq && showLq && <td style={{ width: 140 }}>{s.lq_image ? <SampleImage src={resultsApi.sampleFileUrl(r.id, s, 'lq_image')} seed={sid(s, i)} mock={mock} blur={2} label={`LQ ${sid(s, i)}`} style={{ width: 120, aspectRatio: '4 / 1' }} /> : '-'}</td>}
                       {hasImage && <td style={{ width: 140 }}>{s.image ? <SampleImage src={resultsApi.fileUrl(r.id, s.image)} seed={sid(s, i)} mock={mock} label={`样本 ${sid(s, i)}`} style={{ width: 120, aspectRatio: '4 / 1' }} /> : '-'}</td>}
-                      <td style={{ whiteSpace: 'normal' }}>{sampleText(s) ?? '-'}{s.text === undefined && s.ocr_text !== undefined && <span className="lbl">（OCR）</span>}</td>
-                      <td style={{ whiteSpace: 'normal', color: 'var(--muted)' }}>{s.ref_text ?? '-'}</td>
+                      <td className="break-any" style={{ whiteSpace: 'normal', minWidth: 180 }}>{sampleText(s) ?? '-'}{s.text === undefined && s.ocr_text !== undefined && <span className="lbl nowrap">（OCR）</span>}</td>
+                      <td className="break-any" style={{ whiteSpace: 'normal', minWidth: 180, color: 'var(--muted)' }}>{s.ref_text ?? '-'}</td>
                     </>
                   )}
-                  {extraKeys.map((k) => <td key={k} className="lbl" style={{ whiteSpace: 'normal' }}>{s[k] === undefined ? '-' : typeof s[k] === 'object' ? JSON.stringify(s[k]) : String(s[k])}</td>)}
+                  {extraKeys.map((k) => {
+                    const val = s[k] === undefined ? '-' : typeof s[k] === 'object' ? JSON.stringify(s[k]) : String(s[k])
+                    return <td key={k} className="lbl break-any" style={{ whiteSpace: 'normal', maxWidth: 220 }} title={val}>{val}</td>
+                  })}
                   {metricKeys.map((k) => {
                     const v = s.metrics?.[k]
                     const bad = v !== undefined && ((k === 'cer' && v > 0) || (k === 'ocr_a' && v < 1))
@@ -413,7 +449,7 @@ function EvalDialog({ r, evaluators, onClose, onDone }: { r: ResultSet; evaluato
   const copies = config?.server_id && config.server_id !== r.server_id
   return (
     <Modal title="发起评测" onClose={onClose} width={600}>
-      <div className="lbl" style={{ marginTop: -8 }}>结果集：<span className="mono">{r.name}</span> · {r.server_name}:{r.path}</div>
+      <div className="lbl break-any" style={{ marginTop: -8 }}>结果集：<span className="mono">{r.name}</span> · {r.server_name}:{r.path}</div>
       <form className="col" style={{ gap: 14 }} onSubmit={(e) => { e.preventDefault(); submit() }}>
         <label className="field"><span className="lbl">评测配置（在右上角“评测配置”里保存和修改）</span>
           <select className="inp" value={configId} onChange={(e) => pickConfig(e.target.value)}>
@@ -502,7 +538,7 @@ function RegisterDialog({ projects, onClose, onDone }: { projects: Project[]; on
               {(servers.data ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </label>
-          <label className="field" style={{ flex: '2 1 0' }}><span className="lbl">目录路径（绝对路径）</span><input className="inp mono" style={{ fontSize: 13 }} placeholder="/data/results/..." value={path} onChange={(e) => setPath(e.target.value)} required autoFocus /></label>
+          <label className="field" style={{ flex: '2 1 0', minWidth: 0 }}><span className="lbl">目录路径（绝对路径）</span><input className="inp mono" style={{ fontSize: 13 }} placeholder="/data/results/..." value={path} onChange={(e) => setPath(e.target.value)} required autoFocus /></label>
         </div>
         <label className="field"><span className="lbl">名称（可选，默认取 meta.json 的 name 或目录名）</span><input className="inp" value={name} onChange={(e) => setName(e.target.value)} /></label>
         <div className="row" style={{ gap: 12 }}>
@@ -594,18 +630,18 @@ function ProjectsDialog({ onClose }: { onClose: () => void }) {
   }
   return (
     <Modal title="项目" onClose={onClose} width={560}>
-      <div className="col" style={{ gap: 0 }}>
-        {(projects.data ?? []).map((p) => (
-          <div key={p.id} className="list-row" style={{ gap: 12 }}>
+      <div className="col" style={{ gap: 0, maxHeight: 280, overflowY: 'auto', border: '1px solid var(--border-soft)', borderRadius: 8 }}>
+        {(projects.data ?? []).map((p, idx) => (
+          <div key={p.id} className="list-row" style={{ gap: 12, borderTop: idx === 0 ? 0 : undefined }}>
             <span className="col grow" style={{ minWidth: 0 }}>
-              <span style={{ fontWeight: 500 }}>{p.name}</span>
-              <span className="lbl">{p.result_count} 个结果集{p.description ? ` · ${p.description}` : ''}</span>
+              <span className="ellipsis" style={{ fontWeight: 500 }} title={p.name}>{p.name}</span>
+              <span className="lbl line-clamp-2" title={p.description ?? undefined}>{p.result_count} 个结果集{p.description ? ` · ${p.description}` : ''}</span>
             </span>
             <button type="button" className="btn sm" onClick={() => { setEditing(p.id); setName(p.name); setDescription(p.description ?? '') }}>修改</button>
             <button type="button" className="btn sm" onClick={() => remove(p)}>删除</button>
           </div>
         ))}
-        {!projects.loading && (projects.data ?? []).length === 0 && <div className="list-row lbl">还没有项目</div>}
+        {!projects.loading && (projects.data ?? []).length === 0 && <div className="list-row lbl" style={{ borderTop: 0 }}>还没有项目</div>}
       </div>
       <form className="col" style={{ gap: 12 }} onSubmit={(e) => { e.preventDefault(); save() }}>
         <div className="row" style={{ gap: 12 }}>
@@ -667,12 +703,12 @@ function ConfigsDialog({ evaluators, onClose }: { evaluators: Evaluator[]; onClo
     <Modal title="评测配置" onClose={onClose} width={680}>
       {!form && (
         <>
-          <div className="col" style={{ gap: 0 }}>
-            {(configs.data ?? []).map((c) => (
-              <div key={c.id} className="list-row" style={{ gap: 12, alignItems: 'flex-start' }}>
+          <div className="col" style={{ gap: 0, maxHeight: 320, overflowY: 'auto', border: '1px solid var(--border-soft)', borderRadius: 8 }}>
+            {(configs.data ?? []).map((c, idx) => (
+              <div key={c.id} className="list-row" style={{ gap: 12, alignItems: 'flex-start', borderTop: idx === 0 ? 0 : undefined }}>
                 <span className="col grow" style={{ minWidth: 0, gap: 2 }}>
-                  <span style={{ fontWeight: 500 }}>{c.name}</span>
-                  <span className="lbl">{c.metrics.map((k) => metricLabel(evaluators, k)).join(' · ')} · {c.server_name ? `在 ${c.server_name}:${c.server_path} 评测` : '在结果所在服务器上评测'}</span>
+                  <span className="ellipsis" style={{ fontWeight: 500 }} title={c.name}>{c.name}</span>
+                  <span className="lbl break-any">{c.metrics.map((k) => metricLabel(evaluators, k)).join(' · ')} · {c.server_name ? `在 ${c.server_name}:${c.server_path} 评测` : '在结果所在服务器上评测'}</span>
                   {[['Label', c.label_file], ['GT', c.gt_dir], ['LQ', c.lq_dir]].filter(([, v]) => v).map(([k, v]) => (
                     <span key={k} className="lbl mono ellipsis" title={v ?? ''}>{k} {v}</span>
                   ))}
@@ -681,7 +717,7 @@ function ConfigsDialog({ evaluators, onClose }: { evaluators: Evaluator[]; onClo
                 <button type="button" className="btn sm" onClick={() => remove(c)}>删除</button>
               </div>
             ))}
-            {!configs.loading && (configs.data ?? []).length === 0 && <div className="list-row lbl">还没有评测配置</div>}
+            {!configs.loading && (configs.data ?? []).length === 0 && <div className="list-row lbl" style={{ borderTop: 0 }}>还没有评测配置</div>}
           </div>
           {err && <div className="notice err">{err}</div>}
           <div className="row" style={{ justifyContent: 'flex-end' }}>

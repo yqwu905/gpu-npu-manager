@@ -10,8 +10,8 @@ import { PaneResizer, usePaneWidth } from './compare/PaneResizer.tsx'
 import { thumbs } from './compare/thumbs.ts'
 import { fmtMetric, sampleKind, sampleText } from './Results'
 
-// 三个系列的颜色在明度上拉开，色弱也能区分
-const COLORS = ['#123F99', '#E08A2E', '#8DB3F0', '#2E8B57', '#8E2219']
+// 系列颜色在明度与色相上拉开，色弱也能区分；超过 5 组对比时继续提供区分色
+const COLORS = ['#123F99', '#E08A2E', '#8DB3F0', '#2E8B57', '#8E2219', '#6D3FB8', '#0E7C86', '#9C4221']
 
 /** 按编辑距离对齐，标出识别结果中与参考答案不一致的字符 */
 function diffChars(pred: string, ref: string): { c: string; bad: boolean }[] {
@@ -79,7 +79,7 @@ export default function ComparePage() {
   const nameOf = useCallback((id: number) => id < 0
     ? `LQ · ${lqSets.data?.find((r) => r.id === -id)?.name ?? `#${-id}`}`
     : m?.result_sets.find((r) => r.id === id)?.name ?? sets.data?.find((r) => r.id === id)?.name ?? `#${id}`, [m, sets.data, lqSets.data])
-  const colorOf = useCallback((id: number) => COLORS[allIds.indexOf(id) % COLORS.length], [allIds])
+  const colorOf = useCallback((id: number) => COLORS[Math.max(0, allIds.indexOf(id)) % COLORS.length], [allIds])
   // 离开对比页：中止全部图片请求、释放解码缓存，缩略图只留 500 张；图片列表保留
   useEffect(() => () => { loader.abortAll(); bitmaps.clear(); thumbs.trim(500) }, [])
 
@@ -125,7 +125,7 @@ export default function ComparePage() {
           <section aria-label="推理结果选择" aria-hidden={!setsOpen} className={setsOpen ? 'card cmp-panel' : 'card cmp-panel off'} style={{ width: setsW.width }}>
             <div className="cmp-panel-head">
               <h2 className="grow" style={{ fontSize: 15 }}>推理结果</h2>
-              <span className="lbl">已选 {ids.length} / {candidates.length}</span>
+              <span className="lbl nowrap">已选 {ids.length} / {candidates.length}</span>
               <button type="button" className="cmp-icon-btn" onClick={() => setSetsOpen(false)} aria-label="折叠推理结果栏" aria-expanded="true">‹</button>
             </div>
             <div style={{ padding: '8px 8px 0' }}>
@@ -133,9 +133,9 @@ export default function ComparePage() {
             </div>
             <div className="col" style={{ flex: '1 1 0', minHeight: 0, overflowY: 'auto', padding: 6, gap: 2 }}>
               {listed.map((r) => (
-                <label key={r.id} className="cmp-set" style={ids.includes(r.id) ? { background: 'var(--bg)' } : undefined}>
+                <label key={r.id} className="cmp-set" style={ids.includes(r.id) ? { background: 'var(--bg)' } : undefined} title={`${r.name}\n${r.server_name} · ${r.path}`}>
                   <input type="checkbox" checked={ids.includes(r.id)} onChange={() => toggleId(r.id)} />
-                  <span className="col" style={{ gap: 3, minWidth: 0 }}>
+                  <span className="col grow" style={{ gap: 3, minWidth: 0 }}>
                     <span className="row" style={{ gap: 7 }}>
                       <span className="dot" style={{ width: 10, height: 10, background: ids.includes(r.id) ? colorOf(r.id) : 'var(--control)' }} />
                       <span className="mono ellipsis" style={{ fontSize: 13, fontWeight: 500 }}>{r.name}</span>
@@ -149,9 +149,9 @@ export default function ComparePage() {
                 <>
                   <div className="lbl" style={{ padding: '10px 10px 4px' }}>LQ 数据集（仅图片对比）</div>
                   {lqSets.data.map((r) => (
-                    <label key={`lq${r.id}`} className="cmp-set" style={allIds.includes(-r.id) ? { background: 'var(--bg)' } : undefined} title={r.lq_dir}>
+                    <label key={`lq${r.id}`} className="cmp-set" style={allIds.includes(-r.id) ? { background: 'var(--bg)' } : undefined} title={`LQ · ${r.name}\n${r.server_name}:${r.lq_dir}`}>
                       <input type="checkbox" checked={allIds.includes(-r.id)} onChange={() => toggleId(-r.id)} />
-                      <span className="col" style={{ gap: 3, minWidth: 0 }}>
+                      <span className="col grow" style={{ gap: 3, minWidth: 0 }}>
                         <span className="row" style={{ gap: 7 }}>
                           <span className="dot" style={{ width: 10, height: 10, background: allIds.includes(-r.id) ? colorOf(-r.id) : 'var(--control)' }} />
                           <span className="mono ellipsis" style={{ fontSize: 13, fontWeight: 500 }}>LQ · {r.name}</span>
@@ -168,7 +168,10 @@ export default function ComparePage() {
           <button type="button" className={setsOpen ? 'cmp-rail off' : 'cmp-rail'} onClick={() => setSetsOpen(true)} aria-label="展开推理结果栏" aria-expanded="false">
             <span aria-hidden="true">›</span>
             <span className="cmp-rail-title">推理结果</span>
-            <span className="col" style={{ gap: 6 }}>{allIds.map((id) => <span key={id} className="dot" style={{ width: 10, height: 10, background: colorOf(id) }} />)}</span>
+            <span className="col" style={{ gap: 6, alignItems: 'center' }}>
+              {allIds.slice(0, 8).map((id) => <span key={id} className="dot" style={{ width: 10, height: 10, background: colorOf(id) }} />)}
+              {allIds.length > 8 && <span className="mono lbl" style={{ fontSize: 10 }}>+{allIds.length - 8}</span>}
+            </span>
           </button>
         </div>
         {setsOpen && <PaneResizer label="调整推理结果栏宽度" width={setsW.width} bounds={setsW.bounds} onChange={setsW.set} />}
@@ -192,7 +195,12 @@ export default function ComparePage() {
                 {ids.map((id, i) => (
                   <tr key={id}>
                     <td><input type="radio" name="baseline" aria-label={`设为基线 ${nameOf(id)}`} checked={id === base} onChange={() => setBaseIdx(i)} style={{ width: 16, height: 16 }} /></td>
-                    <td><span className="row"><span className="dot" style={{ width: 10, height: 10, borderRadius: 5, background: colorOf(id) }} /><span className="mono" style={{ fontWeight: 500 }}>{nameOf(id)}</span></span></td>
+                    <td style={{ maxWidth: 280 }}>
+                      <span className="row">
+                        <span className="dot" style={{ width: 10, height: 10, borderRadius: 5, background: colorOf(id) }} />
+                        <span className="mono ellipsis" style={{ fontWeight: 500 }} title={nameOf(id)}>{nameOf(id)}</span>
+                      </span>
+                    </td>
                     {m.metrics.map((d) => {
                       const v = valueOf(id, d.name), b = valueOf(base, d.name)
                       return (
@@ -202,7 +210,13 @@ export default function ComparePage() {
                         </td>
                       )
                     })}
-                    <td className="lbl">{(() => { const meta = m.result_sets.find((r) => r.id === id)?.meta ?? {}; return `${String(meta.model ?? '-')} · ${String(meta.dataset ?? '-')}` })()}</td>
+                    <td className="lbl" style={{ maxWidth: 260 }}>
+                      {(() => {
+                        const meta = m.result_sets.find((r) => r.id === id)?.meta ?? {}
+                        const text = `${String(meta.model ?? '-')} · ${String(meta.dataset ?? '-')}`
+                        return <div className="ellipsis" title={text}>{text}</div>
+                      })()}
+                    </td>
                   </tr>
                 ))}
                 {lqValues && (
@@ -235,20 +249,24 @@ export default function ComparePage() {
               const lo = mn - pad, hi = mx + pad
               const pos = (v: number) => ((v - lo) / (hi - lo)) * 100
               const best = bestOf(d.name, d.higher_is_better)
+              const bestName = nameOf(ids[vs.indexOf(best)])
               const bv = valueOf(base, d.name)
               return (
                 <div key={d.name} className="card col" style={{ padding: '16px 18px', gap: 10 }}>
-                  <div className="row" style={{ alignItems: 'baseline' }}>
-                    <span style={{ fontWeight: 600 }}>{d.label}</span>
-                    <span className="lbl grow">{d.higher_is_better ? '越高越好' : '越低越好'}</span>
-                    <span className="lbl">最佳 <span className="mono" style={{ color: 'var(--ink)' }}>{nameOf(ids[vs.indexOf(best)])}</span></span>
+                  <div className="row" style={{ alignItems: 'baseline', gap: 8 }}>
+                    <span className="nowrap shrink-0" style={{ fontWeight: 600 }}>{d.label}</span>
+                    <span className="lbl nowrap shrink-0">{d.higher_is_better ? '越高越好' : '越低越好'}</span>
+                    <span className="grow" />
+                    <span className="lbl ellipsis" style={{ maxWidth: '58%' }} title={`最佳：${bestName}`}>
+                      最佳 <span className="mono" style={{ color: 'var(--ink)' }}>{bestName}</span>
+                    </span>
                   </div>
                   <div className="col" style={{ gap: 10, paddingTop: 4 }}>
                     {ids.map((id, i) => {
                       const v = vs[i]
                       return (
                         <div key={id} className="row" style={{ gap: 10 }}>
-                          <span className="mono lbl ellipsis" style={{ width: 120 }}>{nameOf(id)}</span>
+                          <span className="mono lbl ellipsis shrink-0" style={{ width: 120 }} title={nameOf(id)}>{nameOf(id)}</span>
                           <div className="grow" style={{ position: 'relative', height: 18 }}>
                             <div style={{ position: 'absolute', left: 0, right: 0, top: 8, height: 2, background: 'var(--track)' }} />
                             {v !== null && bv !== null && (
@@ -258,7 +276,7 @@ export default function ComparePage() {
                               <div style={{ position: 'absolute', top: 3, width: 12, height: 12, borderRadius: 6, marginLeft: -6, left: `${pos(v)}%`, background: colorOf(id), border: '2px solid #FFFFFF' }} />
                             )}
                           </div>
-                          <span className="mono" style={{ width: 56, textAlign: 'right', fontSize: 13, fontWeight: v === best ? 600 : 400 }}>{fmtMetric(v)}</span>
+                          <span className="mono shrink-0" style={{ width: 56, textAlign: 'right', fontSize: 13, fontWeight: v === best ? 600 : 400 }}>{fmtMetric(v)}</span>
                         </div>
                       )
                     })}
@@ -272,20 +290,20 @@ export default function ComparePage() {
 
           <section className="card col">
             <div className="row wrap" style={{ padding: '16px 18px', gap: 12, borderBottom: '1px solid var(--border-soft)' }}>
-              <div className="grow">
+              <div className="grow" style={{ minWidth: 220 }}>
                 <h2>样本对比</h2>
                 <div className="lbl" style={{ marginTop: 4 }}>同一样本 id 下并排展示各结果集的输出，按逐样本指标差异排序，快速找到差别最大的样本</div>
               </div>
-              {hasLqImage && <span className="row" style={{ gap: 6 }}><span className="lbl">LQ</span><Switch on={showLq} onChange={setShowLq} label="并排显示 LQ" /></span>}
+              {hasLqImage && <span className="row shrink-0" style={{ gap: 6 }}><span className="lbl">LQ</span><Switch on={showLq} onChange={setShowLq} label="并排显示 LQ" /></span>}
               {m.metrics.length > 0 && (
                 <>
-                  <label className="row"><span className="lbl">指标</span>
-                    <select className="inp" value={metric} onChange={(e) => { setMetricPick(e.target.value); setPage(0) }}>
+                  <label className="row shrink-0"><span className="lbl">指标</span>
+                    <select className="inp filter-select" value={metric} onChange={(e) => { setMetricPick(e.target.value); setPage(0) }}>
                       {m.metrics.map((d) => <option key={d.name} value={d.name}>{d.label}</option>)}
                     </select>
                   </label>
-                  <label className="row"><span className="lbl">排序</span>
-                    <select className="inp" value={sort} onChange={(e) => { setSort(e.target.value as typeof sort); setPage(0) }}>
+                  <label className="row shrink-0"><span className="lbl">排序</span>
+                    <select className="inp filter-select" value={sort} onChange={(e) => { setSort(e.target.value as typeof sort); setPage(0) }}>
                       <option value="spread">差异最大优先</option>
                       <option value="worst">基线最差优先</option>
                       <option value="none">原始顺序</option>
@@ -293,9 +311,9 @@ export default function ComparePage() {
                   </label>
                 </>
               )}
-              <span className="row" style={{ gap: 6 }}>
+              <span className="row shrink-0" style={{ gap: 6 }}>
                 <button type="button" className="btn sm" aria-label="上一页" disabled={page === 0} onClick={() => setPage(page - 1)}>‹</button>
-                <span className="mono lbl">{page + 1} / {pages}</span>
+                <span className="mono lbl nowrap">{page + 1} / {pages}</span>
                 <button type="button" className="btn sm" aria-label="下一页" disabled={page + 1 >= pages} onClick={() => setPage(page + 1)}>›</button>
               </span>
             </div>
@@ -313,13 +331,13 @@ export default function ComparePage() {
               const mediaOf = (owner: number, k: 'ref_image' | 'lq_image') => it.results[String(owner)]?.media?.[k]
               const lqHolder = [base, ...ids].find((id) => typeof it.results[String(id)]?.lq_image === 'string')
               const lqImage = lqHolder !== undefined ? String(it.results[String(lqHolder)]?.lq_image) : null
-              const spreadLabel = metricDef ? <span className="lbl">{metricDef.label} 差 <span className="mono" style={{ color: 'var(--ink)' }}>{fmtMetric(it.spread)}</span></span> : null
+              const spreadLabel = metricDef ? <span className="lbl nowrap shrink-0">{metricDef.label} 差 <span className="mono" style={{ color: 'var(--ink)' }}>{fmtMetric(it.spread)}</span></span> : null
               if (kind === 'image') {
                 return (
                   <div key={it.id} className="table-box" style={{ borderBottom: '1px solid var(--border-soft)' }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: `110px repeat(${ids.length + 1 + lqCols}, minmax(150px, 1fr))`, gap: 12, padding: '12px 18px', alignItems: 'start', minWidth: 110 + (ids.length + 1 + lqCols) * 162 }}>
-                      <div className="col" style={{ gap: 4 }}>
-                        <span className="mono" style={{ fontWeight: 500 }}>{it.id}</span>
+                    <div style={{ display: 'grid', gridTemplateColumns: `144px repeat(${ids.length + 1 + lqCols}, minmax(150px, 1fr))`, gap: 12, padding: '12px 18px', alignItems: 'start', minWidth: 144 + (ids.length + 1 + lqCols) * 162 }}>
+                      <div className="col" style={{ gap: 4, minWidth: 0 }}>
+                        <span className="mono line-clamp-2" style={{ fontWeight: 500, fontSize: 12.5 }} title={it.id}>{it.id}</span>
                         {spreadLabel}
                       </div>
                       {lqCols > 0 && (
@@ -340,7 +358,7 @@ export default function ComparePage() {
                           <div key={id} className="col" style={{ gap: 6 }}>
                             {img ? <SampleImage src={resultsApi.fileUrl(id, img)} seed={it.id} mock={mock} blur={[1.6, 0.8, 0.5][i] ?? 0.5} label={`${nameOf(id)} 输出 ${it.id}`}
                               style={{ boxShadow: v !== null && v === best ? '0 0 0 2px #2E8B57' : undefined }} /> : <div className="thumb" />}
-                            <span className="row mono" style={{ fontSize: 12, gap: 6 }}>
+                            <span className="row mono" style={{ fontSize: 12, gap: 6 }} title={nameOf(id)}>
                               <span className="dot" style={{ background: colorOf(id) }} />
                               <span style={{ fontWeight: v === best ? 600 : 400 }}>{fmtMetric(v)}</span>
                               {id !== base && <span style={{ color: deltaColor(v, bv, !!metricDef?.higher_is_better) }}>{deltaText(v, bv)}</span>}
@@ -356,24 +374,24 @@ export default function ComparePage() {
               const crop = it.results[String(base)]?.image
               return (
                 <div key={it.id} className="col" style={{ padding: '14px 18px', borderBottom: '1px solid var(--border-soft)', gap: 8 }}>
-                  <div className="row" style={{ gap: 12 }}>
-                    <span className="mono" style={{ fontWeight: 500 }}>{it.id}</span>
+                  <div className="row wrap" style={{ gap: '6px 12px' }}>
+                    <span className="mono ellipsis" style={{ fontWeight: 550, maxWidth: '100%' }} title={it.id}>{it.id}</span>
                     {spreadLabel}
                     <span className="grow" />
-                    {lqCols > 0 && lqImage && lqHolder !== undefined && <SampleImage src={resultsApi.fileUrl(lqHolder, lqImage, mediaOf(lqHolder, 'lq_image'))} seed={it.id} mock={mock} blur={2} label={`LQ ${it.id}`} style={{ width: 180, aspectRatio: '7 / 1' }} />}
-                    {typeof crop === 'string' && <SampleImage src={resultsApi.fileUrl(base, crop)} seed={it.id} mock={mock} label={`样本图片 ${it.id}`} style={{ width: 180, aspectRatio: '7 / 1' }} />}
+                    {lqCols > 0 && lqImage && lqHolder !== undefined && <SampleImage src={resultsApi.fileUrl(lqHolder, lqImage, mediaOf(lqHolder, 'lq_image'))} seed={it.id} mock={mock} blur={2} label={`LQ ${it.id}`} style={{ width: 180, aspectRatio: '7 / 1', flexShrink: 0 }} />}
+                    {typeof crop === 'string' && <SampleImage src={resultsApi.fileUrl(base, crop)} seed={it.id} mock={mock} label={`样本图片 ${it.id}`} style={{ width: 180, aspectRatio: '7 / 1', flexShrink: 0 }} />}
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '170px minmax(0, 1fr) 70px', gap: '6px 12px', alignItems: 'center', fontSize: 15 }}>
-                    <span className="lbl">参考答案</span><span>{ref}</span><span />
+                  <div style={{ display: 'grid', gridTemplateColumns: '180px minmax(0, 1fr) 72px', gap: '6px 12px', alignItems: 'start', fontSize: 14.5 }}>
+                    <span className="lbl" style={{ paddingTop: 2 }}>参考答案</span><span className="break-any">{ref}</span><span />
                     {ids.map((id, i) => {
                       const r = it.results[String(id)]
                       const text = sampleText(r) ?? ''
                       return [
-                        <span key={`n${id}`} className="row" style={{ gap: 6, fontSize: 12 }}><span className="dot" style={{ background: colorOf(id) }} /><span className="mono ellipsis">{nameOf(id)}</span></span>,
-                        <span key={`t${id}`}>{!r ? <span className="lbl">该结果集没有这个样本</span> : !ref ? text : diffChars(text, ref).map((ch, k) => (
+                        <span key={`n${id}`} className="row" style={{ gap: 6, fontSize: 12, paddingTop: 2 }} title={nameOf(id)}><span className="dot" style={{ background: colorOf(id) }} /><span className="mono ellipsis">{nameOf(id)}</span></span>,
+                        <span key={`t${id}`} className="break-any">{!r ? <span className="lbl">该结果集没有这个样本</span> : !ref ? text : diffChars(text, ref).map((ch, k) => (
                           <span key={k} style={ch.bad ? { background: '#FBE1DF', color: '#8E2219', textDecoration: 'underline', borderRadius: 2 } : undefined}>{ch.c}</span>
                         ))}</span>,
-                        <span key={`v${id}`} className="mono" style={{ fontSize: 12, textAlign: 'right', color: vals[i] !== null && vals[i] !== best ? '#8E2219' : 'var(--muted)' }}>{fmtMetric(vals[i])}</span>,
+                        <span key={`v${id}`} className="mono" style={{ fontSize: 12, textAlign: 'right', paddingTop: 2, color: vals[i] !== null && vals[i] !== best ? '#8E2219' : 'var(--muted)' }}>{fmtMetric(vals[i])}</span>,
                       ]
                     })}
                   </div>

@@ -209,15 +209,15 @@ function ThumbPanel({ cols, cur, focus, open, setOpen, modKey, onPick, onFocus, 
               const note = ix?.missing ? `${ix.missing} 个文件不存在` : undefined
               return (
                 <div key={c.id} className="col" style={{ gap: 4, minWidth: 0 }}>
-                  <button type="button" className="cmp-col-head" onClick={() => onFocus(c.id)} aria-label={`以 ${c.name} 为对齐基准`} title={note} style={{ borderBottomColor: c.color }}>
+                  <button type="button" className="cmp-col-head" onClick={() => onFocus(c.id)} aria-label={`以 ${c.name} 为对齐基准`} title={note ? `${c.name}（${note}）` : c.name} style={{ borderBottomColor: c.color }}>
                     <span className="row" style={{ gap: 6, minWidth: 0, width: '100%' }}>
                       <span className="dot" style={{ width: 9, height: 9, background: c.color }} />
                       <span className="mono ellipsis" style={{ fontSize: 12, fontWeight: c.id === focus ? 600 : 400 }}>{c.name}</span>
                     </span>
-                    <span className="mono lbl" style={{ fontSize: 11 }}>{len ? `${curIdx[k] + 1} / ${len}` : c.st.loading ? '加载中' : '0 张'}</span>
+                    <span className="mono lbl nowrap" style={{ fontSize: 11 }}>{len ? `${curIdx[k] + 1} / ${len}` : c.st.loading ? '加载中' : '0 张'}</span>
                   </button>
-                  {c.st.error && <span className="lbl" style={{ color: '#A1281F' }}>{c.st.error}</span>}
-                  {ix?.truncated && <span className="lbl" style={{ color: '#5C3F00' }}>只列出前 {len} 张</span>}
+                  {c.st.error && <span className="lbl ellipsis" style={{ color: '#A1281F' }} title={c.st.error}>{c.st.error}</span>}
+                  {ix?.truncated && <span className="lbl nowrap" style={{ color: '#5C3F00' }}>只列出前 {len} 张</span>}
                 </div>
               )
             })}
