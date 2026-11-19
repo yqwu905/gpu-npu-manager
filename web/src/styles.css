@@ -140,6 +140,13 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .cmp-fold { position: relative; flex: 0 0 auto; min-height: 0; overflow: hidden; transition: flex-basis 260ms cubic-bezier(0.2, 0.7, 0.2, 1); }
 .cmp-panel, .cmp-rail { position: absolute; top: 0; left: 0; bottom: 0; opacity: 1; visibility: visible; transition: opacity 180ms ease, visibility 0s linear 0s; }
 .cmp-panel.off, .cmp-rail.off { opacity: 0; visibility: hidden; transition: opacity 180ms ease, visibility 0s linear 180ms; }
+/* 分栏拖动条：负外边距让它正好占满栏与右侧内容之间 14px 的间距，不遮挡栏内滚动条；悬停、聚焦、拖动时显示竖线 */
+.cmp-fold[data-drag] { transition: none; }
+.cmp-resizer { position: relative; z-index: 1; flex: 0 0 14px; margin: 0 -14px; cursor: col-resize; touch-action: none; outline: none; }
+.cmp-resizer::after { content: ''; position: absolute; top: 8px; bottom: 8px; left: 6px; width: 2px; border-radius: 1px; background: transparent; transition: background 120ms ease; }
+.cmp-resizer:hover::after { background: var(--control); }
+.cmp-resizer:focus-visible::after, .cmp-resizer[data-active]::after { background: var(--ink); }
+.col-resizing, .col-resizing * { cursor: col-resize !important; user-select: none !important; }
 .cmp-panel { display: flex; flex-direction: column; min-height: 0; }
 .cmp-panel-head { display: flex; align-items: center; gap: 8px; padding: 10px 8px 10px 16px; border-bottom: 1px solid var(--border-soft); }
 .cmp-icon-btn { width: 30px; height: 30px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 18px; line-height: 1; cursor: pointer; }
@@ -196,4 +203,5 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   .cmp-body { flex-wrap: wrap; }
   .cmp-fold { flex-basis: 100% !important; height: 320px; }
   .cmp-panel { width: 100% !important; }
+  .cmp-resizer { display: none; }
 }

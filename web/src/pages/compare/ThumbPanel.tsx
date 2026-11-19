@@ -5,6 +5,7 @@ import { resultsApi } from '../../api/results.ts'
 import type { ImageIndex, IndexState } from './imageIndex.ts'
 import { PRIO } from './loader.ts'
 import { clampIdx } from './nav.ts'
+import { PaneResizer, usePaneWidth } from './PaneResizer.tsx'
 import { perf } from './perf.ts'
 import { thumbs, useThumb } from './thumbs.ts'
 import { ROW_H, follow, rangeOf, sameRange, vmap, type Range } from './virtual.ts'
@@ -187,10 +188,14 @@ function ThumbPanel({ cols, cur, focus, open, setOpen, modKey, onPick, onFocus, 
     items.push(<ThumbRow key={i} i={i} top={(vm.scaled ? i - range.start : i) * ROW_H} cols={cols} sel={sel} load={load}
       prio={i >= range.first && i <= range.last ? PRIO.thumbs : PRIO.overscan} modKey={modKey} />)
   }
-  const thumbW = Math.min(Math.max(n, 1), 4) * 120 + 10
   const gridW = Math.max(n, 1) * 120 + 8
+  // 默认最多并排 4 列；拖动范围从 1 列到所有列完整显示
+  const thumbDef = Math.min(Math.max(n, 1), 4) * 120 + 10
+  const pane = usePaneWidth({ storageKey: 'gnm.compare.thumbsWidth', def: thumbDef, min: 140, max: Math.max(gridW + 2, thumbDef) })
+  const thumbW = pane.width
 
   return (
+    <>
     <div className="cmp-fold" style={{ flexBasis: open ? thumbW : 44 }}>
       <section aria-label="缩略图" aria-hidden={!open} className={open ? 'card cmp-panel' : 'card cmp-panel off'} style={{ width: thumbW }}>
         <div className="cmp-panel-head">
@@ -227,6 +232,8 @@ function ThumbPanel({ cols, cur, focus, open, setOpen, modKey, onPick, onFocus, 
         <span className="cmp-rail-title">缩略图</span>
       </button>
     </div>
+    {open && <PaneResizer label="调整缩略图栏宽度" width={thumbW} bounds={pane.bounds} onChange={pane.set} />}
+    </>
   )
 }
 

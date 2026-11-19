@@ -6,6 +6,7 @@ import { useMock, usePoll } from '../lib/hooks'
 import CompareImages from './CompareImages'
 import { bitmaps } from './compare/bitmapCache.ts'
 import { loader } from './compare/loader.ts'
+import { PaneResizer, usePaneWidth } from './compare/PaneResizer.tsx'
 import { thumbs } from './compare/thumbs.ts'
 import { fmtMetric, sampleKind, sampleText } from './Results'
 
@@ -47,6 +48,7 @@ export default function ComparePage() {
   const [showLq, setShowLq] = useState(true)
   const [view, setView] = useState<'images' | 'metrics'>('images')
   const [setsOpen, setSetsOpen] = useState(true)
+  const setsW = usePaneWidth({ storageKey: 'gnm.compare.setsWidth', def: 236, min: 180, max: 520 })
   const [q, setQ] = useState('')
   const pageSize = 10
   const base = ids[Math.min(baseIdx, ids.length - 1)]
@@ -119,8 +121,8 @@ export default function ComparePage() {
       <ErrorNote error={sets.error || metrics.error || (view === 'metrics' ? samples.error : null)} />
 
       <div className="cmp-body">
-        <div className="cmp-fold" style={{ flexBasis: setsOpen ? 236 : 44 }}>
-          <section aria-label="推理结果选择" aria-hidden={!setsOpen} className={setsOpen ? 'card cmp-panel' : 'card cmp-panel off'} style={{ width: 236 }}>
+        <div className="cmp-fold" style={{ flexBasis: setsOpen ? setsW.width : 44 }}>
+          <section aria-label="推理结果选择" aria-hidden={!setsOpen} className={setsOpen ? 'card cmp-panel' : 'card cmp-panel off'} style={{ width: setsW.width }}>
             <div className="cmp-panel-head">
               <h2 className="grow" style={{ fontSize: 15 }}>推理结果</h2>
               <span className="lbl">已选 {ids.length} / {candidates.length}</span>
@@ -169,6 +171,7 @@ export default function ComparePage() {
             <span className="col" style={{ gap: 6 }}>{allIds.map((id) => <span key={id} className="dot" style={{ width: 10, height: 10, background: colorOf(id) }} />)}</span>
           </button>
         </div>
+        {setsOpen && <PaneResizer label="调整推理结果栏宽度" width={setsW.width} bounds={setsW.bounds} onChange={setsW.set} />}
 
         {view === 'images' && <CompareImages ids={allIds} nameOf={nameOf} colorOf={colorOf} />}
 
