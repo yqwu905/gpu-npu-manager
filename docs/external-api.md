@@ -67,7 +67,7 @@ curl -X POST 'http://127.0.0.1:8000/api/servers/1/refresh'
 ```sh
 curl 'http://127.0.0.1:8000/api/jobs?status=queued&status=running&limit=50&offset=0'
 curl 'http://127.0.0.1:8000/api/jobs/42'
-curl 'http://127.0.0.1:8000/api/jobs/42/log?offset=0&limit=65536'
+curl 'http://127.0.0.1:8000/api/jobs/42/log?tail=524288'
 ```
 
 列表返回 `{"total": 120, "items": [...]}`，详情直接返回任务对象。筛选参数：
@@ -80,7 +80,7 @@ curl 'http://127.0.0.1:8000/api/jobs/42/log?offset=0&limit=65536'
 | `q` | 搜索名称、命令、提交人；数字或 `#数字` 同时匹配任务 ID |
 | `limit`、`offset` | 默认 50、0；limit 为 1–500，offset 非负 |
 
-默认按 ID 倒序；只筛选 `queued` 时按调度顺序。主要字段有 `id`、`status`、`queue_position`、`wait_reason`、`assigned_server_id`、`device_indices`、`exit_code`、`error`。日志接口返回 `data`、`size`、`next_offset` 等，后续请求使用上次的 `next_offset`。
+默认按 ID 倒序；只筛选 `queued` 时按调度顺序。主要字段有 `id`、`status`、`queue_position`、`wait_reason`、`assigned_server_id`、`device_indices`、`exit_code`、`error`。日志接口返回 `data`、`size`、`offset`、`next_offset`（支持 `gzip` 压缩），传 `tail` 可优先从末尾拉取最新日志（配合 `end` 向前翻页），后续增量轮询传上次的 `next_offset`（`limit` 默认 512 KB，上限 4 MB）。
 
 ## 3. 创建任务
 

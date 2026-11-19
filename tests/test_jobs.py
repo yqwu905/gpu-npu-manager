@@ -52,9 +52,19 @@ class FakeCluster:
             if m.group(2) == "kill":
                 job.update(state="exited", killed=True)
             if m.group(2) == "log":
-                data = "hello\n"[int(request.url.params["offset"]):]
-                return httpx.Response(200, json={"offset": int(request.url.params["offset"]),
-                                                 "next_offset": 6, "size": 6, "data": data})
+                raw = job.get("log", "hello\n").encode("utf-8")
+                offset = max(0, min(int(request.url.params.get("offset", "0")), len(raw)))
+                limit = int(request.url.params.get("limit", str(len(raw) or 1)))
+                part = raw[offset : offset + limit]
+                return httpx.Response(
+                    200,
+                    json={
+                        "offset": offset,
+                        "next_offset": offset + len(part),
+                        "size": len(raw),
+                        "data": part.decode("utf-8"),
+                    },
+                )
             return httpx.Response(200, json=job)
         return httpx.Response(404, json={"error": "not found"})
 
@@ -277,11 +287,24 @@ def test_launch_failures(client, cluster):
     assert job(client, slow["id"])["status"] == "running"
 
 
-def test_job_log(client):
+def test_job_log(client, cluster):
     j = submit(client, num_devices=1, group="cv")
     assert client.get(f"/api/jobs/{j['id']}/log").json() == {"offset": 0, "next_offset": 0, "size": 0, "data": ""}
     tick(client)
     assert client.get(f"/api/jobs/{j['id']}/log", params={"offset": 2}).json()["data"] == "llo\n"
+    # tail / end 参数校验
+    assert client.get(f"/api/jobs/{j['id']}/log", params={"tail": 0}).status_code == 422
+    assert client.get(f"/api/jobs/{j['id']}/log", params={"tail": 100, "end": -1}).status_code == 422
+    # 超过 1 KB 时按 Accept-Encoding: gzip 压缩返回
+    srv = job(client, j["id"])["assigned_server_name"]
+    host = "a" if srv == "srv-a" else "b"
+    cluster.hosts[host]["jobs"][f"gnm-{j['id']}"]["log"] = "line-abcdef0123456789\n" * 200
+    resp = client.get(f"/api/jobs/{j['id']}/log", params={"tail": 2048}, headers={"Accept-Encoding": "gzip"})
+    assert resp.status_code == 200 and resp.headers.get("content-encoding") == "gzip"
+    body = resp.json()
+    assert body["next_offset"] == body["size"] and len(body["data"].encode("utf-8")) == 2048
+    earlier = client.get(f"/api/jobs/{j['id']}/log", params={"tail": 1024, "end": body["offset"]}).json()
+    assert earlier["next_offset"] == body["offset"] and len(earlier["data"].encode("utf-8")) == 1024
 
 
 def test_preempt_and_resume(client, cluster):

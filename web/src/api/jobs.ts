@@ -4,6 +4,14 @@ import type { Job, JobCreate, JobLog, JobPage, JobQuery, SchedulerSettings } fro
 
 const fb = <T>(real: () => Promise<T>, mock: () => T | Promise<T>) => withFallback('jobs', real, mock)
 
+export interface JobLogQuery {
+  offset?: number
+  limit?: number
+  tail?: number
+  end?: number
+  signal?: AbortSignal
+}
+
 export const jobsApi = {
   list: (query: JobQuery = {}) => fb(() => request<JobPage>('GET', '/jobs', { query: { limit: 200, ...query } }), () => mockJobs.list(query)),
   get: (id: number) => fb(() => request<Job>('GET', `/jobs/${id}`), () => mockJobs.get(id)),
@@ -15,7 +23,10 @@ export const jobsApi = {
   remove: (id: number) => fb(() => request<void>('DELETE', `/jobs/${id}`), () => mockJobs.remove(id)),
   requeue: (id: number) => fb(() => request<Job>('POST', `/jobs/${id}/requeue`), () => mockJobs.requeue(id)),
   setPriority: (id: number, priority: number) => fb(() => request<Job>('PATCH', `/jobs/${id}`, { body: { priority } }), () => mockJobs.setPriority(id, priority)),
-  log: (id: number, offset: number) => fb(() => request<JobLog>('GET', `/jobs/${id}/log`, { query: { offset } }), () => mockJobs.log(id, offset)),
+  log: (id: number, query: JobLogQuery = {}) => {
+    const { signal, ...params } = query
+    return fb(() => request<JobLog>('GET', `/jobs/${id}/log`, { query: params, signal }), () => mockJobs.log(id, params))
+  },
   // 调度模式接口尚未提供，单独降级，不影响任务接口
   scheduler: () => withFallback('scheduler', () => request<SchedulerSettings>('GET', '/scheduler'), () => mockJobs.scheduler()),
   setScheduler: (body: SchedulerSettings) =>

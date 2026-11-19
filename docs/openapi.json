@@ -1450,7 +1450,7 @@
         "tags": [
           "jobs"
         ],
-        "summary": "增量读取任务日志",
+        "summary": "读取任务日志",
         "operationId": "job_log_api_jobs__job_id__log_get",
         "parameters": [
           {
@@ -1469,11 +1469,11 @@
             "schema": {
               "type": "integer",
               "minimum": 0,
-              "description": "从第几个字节开始读，首次传 0，之后传上次返回的 next_offset",
+              "description": "从第几个字节开始读，增量拉取时传上次返回的 next_offset",
               "default": 0,
               "title": "Offset"
             },
-            "description": "从第几个字节开始读，首次传 0，之后传上次返回的 next_offset"
+            "description": "从第几个字节开始读，增量拉取时传上次返回的 next_offset"
           },
           {
             "name": "limit",
@@ -1481,13 +1481,52 @@
             "required": false,
             "schema": {
               "type": "integer",
-              "maximum": 1048576,
+              "maximum": 4194304,
               "minimum": 1,
               "description": "最多读取的字节数",
-              "default": 65536,
+              "default": 524288,
               "title": "Limit"
             },
             "description": "最多读取的字节数"
+          },
+          {
+            "name": "tail",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 4194304,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "从末尾（或 end 之前）倒数读取的字节数，优先拉取最新日志；传入时忽略 offset 和 limit",
+              "title": "Tail"
+            },
+            "description": "从末尾（或 end 之前）倒数读取的字节数，优先拉取最新日志；传入时忽略 offset 和 limit"
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "与 tail 配合使用，只读取该字节偏移之前的日志，用于向上加载更早日志",
+              "title": "End"
+            },
+            "description": "与 tail 配合使用，只读取该字节偏移之前的日志，用于向上加载更早日志"
           }
         ],
         "responses": {

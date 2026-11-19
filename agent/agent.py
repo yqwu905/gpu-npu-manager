@@ -8,7 +8,7 @@
 - GET  /v1/jobs                本机所有任务记录
 - GET  /v1/jobs/{id}           任务状态（running / exited）与退出码
 - POST /v1/jobs/{id}/kill      终止任务的整个进程组
-- GET  /v1/jobs/{id}/log       按字节偏移量读取任务日志
+- GET  /v1/jobs/{id}/log       按字节偏移量或从末尾（tail/end）读取任务日志（可 gzip）
 - GET  /v1/files/list?path=    列出白名单目录内的文件
 - GET  /v1/files/raw?path=     流式读取文件原始内容（图片、json 等），带 ETag，支持 If-None-Match
 - GET  /v1/files/jsonl?path=   分页读取 jsonl 文件
@@ -499,7 +499,7 @@ class Collector(object):
 _JOB_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 KILL_GRACE_SECONDS = 10
-MAX_LOG_CHUNK = 1024 * 1024
+MAX_LOG_CHUNK = 4 * 1024 * 1024
 
 # 外层 sh 负责在命令结束后把退出码写入文件，这样 Agent 重启后仍能拿到退出码。
 # 命令用 bash -l 执行，以加载登录用户的环境（如 conda）。
@@ -536,6 +536,15 @@ def _decode_utf8_prefix(data):
         except UnicodeDecodeError:
             continue
     return data.decode("utf-8", errors="replace"), len(data)
+
+
+def _skip_utf8_cont(data):
+    """从文件中间定位时跳过开头的 UTF-8 续字节（最多 3 字节），避免把多字节字符从中间截断。"""
+    skip = 0
+    limit = min(3, len(data))
+    while skip < limit and (data[skip] & 0xC0) == 0x80:
+        skip += 1
+    return skip
 
 
 class JobManager(object):
@@ -688,16 +697,44 @@ class JobManager(object):
         except OSError:
             pass
 
-    def read_log(self, job_id, offset, limit):
+    def read_log(self, job_id, offset=0, limit=64 * 1024, tail=None, end=None):
         meta = self._load(job_id)
-        limit = max(1, min(limit, MAX_LOG_CHUNK))
+        if tail is not None:
+            tail = max(1, min(tail, MAX_LOG_CHUNK))
+        else:
+            limit = max(1, min(limit, MAX_LOG_CHUNK))
         try:
             with open(meta["log_path"], "rb") as f:
                 f.seek(0, os.SEEK_END)
                 size = f.tell()
-                offset = max(0, min(offset, size))
-                f.seek(offset)
-                chunk = f.read(limit)
+                if tail is not None:
+                    end_pos = size if end is None else max(0, min(end, size))
+                    start = max(0, end_pos - tail)
+                    read_len = end_pos - start
+                    if read_len <= 0:
+                        return {"offset": end_pos, "next_offset": end_pos, "size": size, "data": ""}
+                    f.seek(start)
+                    chunk = f.read(read_len)
+                    if start > 0:
+                        skip = _skip_utf8_cont(chunk)
+                        if skip < len(chunk):
+                            start += skip
+                            chunk = chunk[skip:]
+                        else:
+                            # tail <= 3 且正好落在单个多字节字符的续字节中时，退回到该字符首字节
+                            back = max(0, start - 3)
+                            f.seek(back)
+                            prefix = f.read(end_pos - back)
+                            pos = start - back
+                            while pos > 0 and (prefix[pos] & 0xC0) == 0x80:
+                                pos -= 1
+                            start = back + pos
+                            chunk = prefix[pos:]
+                    offset = start
+                else:
+                    offset = max(0, min(offset, size))
+                    f.seek(offset)
+                    chunk = f.read(limit)
         except OSError:
             size, chunk, offset = 0, b"", 0
         text, used = _decode_utf8_prefix(chunk)
@@ -1062,12 +1099,17 @@ def make_handler(collector, jobs, files, token, images=None):
                 self.send_header("Connection", "close")
             self.end_headers()
 
-        def _send(self, code, payload, headers=()):
-            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        def _send(self, code, payload, headers=(), compress=False):
+            body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            extra = list(headers)
+            if compress and len(body) >= 1024 and "gzip" in (self.headers.get("Accept-Encoding") or "").lower():
+                body = gzip.compress(body, 1)
+                extra.append(("Content-Encoding", "gzip"))
+                extra.append(("Vary", "Accept-Encoding"))
             self.send_response(code)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
-            for key, value in headers:
+            for key, value in extra:
                 self.send_header(key, value)
             self._end_headers()
             self.wfile.write(body)
@@ -1181,7 +1223,14 @@ def make_handler(collector, jobs, files, token, images=None):
                 elif method == "GET" and len(parts) == 4 and parts[:2] == ["v1", "jobs"] and parts[3] == "log":
                     offset = int(query.get("offset", ["0"])[0])
                     limit = int(query.get("limit", [str(64 * 1024)])[0])
-                    self._send(200, jobs.read_log(parts[2], offset, limit))
+                    tail = int(query["tail"][0]) if "tail" in query else None
+                    end = int(query["end"][0]) if "end" in query else None
+                    if tail is not None and tail < 1:
+                        raise ValueError("tail 必须大于 0")
+                    if end is not None and end < 0:
+                        raise ValueError("end 不能为负数")
+                    hdrs = [("X-Log-Tail", "1")] if tail is not None else ()
+                    self._send(200, jobs.read_log(parts[2], offset, limit, tail=tail, end=end), hdrs, compress=True)
                 elif method == "GET" and parts == ["v1", "files", "list"]:
                     self._send(200, files.list_dir(query.get("path", [""])[0]))
                 elif method == "GET" and parts == ["v1", "files", "raw"]:

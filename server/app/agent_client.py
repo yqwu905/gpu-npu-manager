@@ -1,7 +1,7 @@
 """调用节点 Agent 的任务和文件接口。
 
-任务、状态等控制面请求每次新建连接（超时 agent_timeout）；对比页的图片请求走按事件循环共享的长连接池，
-并按 (Agent, 类别) 限制同时进行的请求数。
+任务、状态等控制面请求每次新建连接（超时 agent_timeout）；对比页的图片请求和任务日志请求走按事件循环共享的长连接池，
+图片请求按 (Agent, 类别) 限制同时进行的请求数。
 """
 
 import asyncio
@@ -17,6 +17,8 @@ from .tunnels import TunnelError
 
 # 浏览样本、读取评测结果时整读的文件上限；图片和大文件用 open_stream 流式转发
 MAX_RAW_BYTES = 64 << 20
+# 旧版 Agent 单次 read_log 的上限（1 MB），tail 兼容回退时按此上限截断
+OLD_AGENT_MAX_LOG_CHUNK = 1024 * 1024
 # Agent 能力的缓存时间（秒）：成功、失败
 FEATURES_TTL = 60
 FEATURES_FAIL_TTL = 10
@@ -133,10 +135,68 @@ class AgentClient:
     async def kill_job(self, host, port, job_id, run: int = 0) -> dict:
         return await self._request("POST", host, port, f"/v1/jobs/{agent_job_id(job_id, run)}/kill")
 
-    async def read_log(self, host, port, job_id, offset: int, limit: int, run: int = 0) -> dict:
-        return await self._request(
-            "GET", host, port, f"/v1/jobs/{agent_job_id(job_id, run)}/log", params={"offset": offset, "limit": limit}
+    async def _read_log_once(
+        self, host: str, port: int, job_id: int, params: dict, run: int = 0
+    ) -> tuple[dict, httpx.Headers]:
+        resp = await self.open_stream(
+            host,
+            port,
+            f"/v1/jobs/{agent_job_id(job_id, run)}/log",
+            params=params,
+            headers={"Accept-Encoding": "gzip"},
+            timeout=self.settings.agent_timeout,
         )
+        try:
+            raw = await resp.aread()
+            headers = resp.headers
+        except httpx.HTTPError as exc:
+            raise self._network_error(exc, (host, port)) from exc
+        finally:
+            await resp.aclose()
+        try:
+            return json.loads(raw), headers
+        except ValueError as exc:
+            raise AgentError(f"Agent 返回的日志不是合法 JSON: {exc}") from exc
+
+    async def read_log(
+        self,
+        host,
+        port,
+        job_id,
+        offset: int = 0,
+        limit: int = 512 * 1024,
+        run: int = 0,
+        tail: int | None = None,
+        end: int | None = None,
+    ) -> dict:
+        if tail is None:
+            data, _ = await self._read_log_once(host, port, job_id, {"offset": offset, "limit": limit}, run=run)
+            return data
+
+        # tail 模式：新版 Agent 一次往返直接返回末尾（或 end 之前）日志并带 X-Log-Tail: 1；
+        # 同时附带 offset=0&limit=1，旧版 Agent 忽略 tail 时只返回 1 字节和总大小 size，再按目标区间补读一次。
+        params = {"offset": 0, "limit": 1, "tail": tail}
+        if end is not None:
+            params["end"] = end
+        data, headers = await self._read_log_once(host, port, job_id, params, run=run)
+        if headers.get("x-log-tail") == "1":
+            return data
+
+        size = int(data.get("size") or 0)
+        target_end = size if end is None else max(0, min(end, size))
+        want_start = max(0, target_end - tail)
+        want_limit = target_end - want_start
+        if want_limit <= 0:
+            return {"offset": target_end, "next_offset": target_end, "size": size, "data": ""}
+        if data.get("offset") == want_start and data.get("next_offset") == target_end:
+            return data
+        if want_limit > OLD_AGENT_MAX_LOG_CHUNK:
+            want_start = target_end - OLD_AGENT_MAX_LOG_CHUNK
+            want_limit = OLD_AGENT_MAX_LOG_CHUNK
+        res, _ = await self._read_log_once(
+            host, port, job_id, {"offset": want_start, "limit": want_limit}, run=run
+        )
+        return res
 
     async def list_dir(self, host, port, path: str) -> dict:
         return await self._request("GET", host, port, "/v1/files/list", params={"path": path})

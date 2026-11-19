@@ -306,9 +306,14 @@
 
 切换调度模式，请求体 `{"strict_order": true}`，返回切换后的值，下一轮调度生效。只保存在内存中，中心服务重启后恢复为环境变量 `GNM_SCHEDULE_STRICT` 的值。
 
-### GET /api/jobs/{id}/log?offset=0&limit=65536
+### GET /api/jobs/{id}/log?offset=0&limit=524288
 
-增量读取日志，返回 `{"offset": 0, "next_offset": 2048, "size": 2048, "data": "..."}`。首次传 `offset=0`，之后传上次的 `next_offset`，可以实现滚动追加。还未启动的任务返回空内容。
+读取任务日志，返回 `{"offset": 0, "next_offset": 2048, "size": 2048, "data": "..."}`（支持 `Accept-Encoding: gzip` 压缩传输）。支持两种读取方式：
+
+- **优先拉取最新日志**（任务队列页面默认方式）：传 `tail`（1 至 4194304 字节），直接从日志末尾倒数读取最新内容（自动对齐 UTF-8 字符边界），再按返回的 `next_offset` 增量追平新输出；向上加载更早日志时同时传 `end=<当前起始 offset>`。
+- **按偏移量顺序增量读取**：不传 `tail`，首次传 `offset=0`，之后传上次的 `next_offset`，`limit` 默认 524288（512 KB），上限 4194304（4 MB）。
+
+还未启动的任务返回空内容。
 
 ## 推理结果与评测
 

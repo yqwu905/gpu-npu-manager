@@ -92,3 +92,43 @@ def test_job_runs_on_real_agent(running_agent, tmp_path):
         assert status["status"] == "succeeded" and status["exit_code"] == 0
         log = client.get(f"/api/jobs/{job['id']}/log").json()
         assert log["data"] == "cards=1\n"
+
+        # 写入较大日志，验证 Agent 与中心服务的 gzip 压缩及 tail / end 分段倒序拉取
+        import gzip
+
+        lines = [f"step={i:05d} loss={1.0 / (i + 1):.6f} 日志内容\n" for i in range(4000)]
+        full_text = "".join(lines)
+        log_path = tmp_path / "agent-data" / "jobs" / f"gnm-{job['id']}.log"
+        log_path.write_text(full_text, encoding="utf-8")
+        total_size = log_path.stat().st_size
+
+        # 直接访问 Agent 验证 gzip 和 X-Log-Tail 响应头
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{running_agent}/v1/jobs/gnm-{job['id']}/log?tail=16384",
+            headers={"X-Agent-Token": "secret", "Accept-Encoding": "gzip"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            assert resp.headers.get("Content-Encoding") == "gzip"
+            assert resp.headers.get("X-Log-Tail") == "1"
+            raw = resp.read()
+            assert len(raw) < 16384  # 压缩后远小于明文
+            agent_tail = json.loads(gzip.decompress(raw))
+        assert agent_tail["next_offset"] == total_size and agent_tail["size"] == total_size
+        assert full_text.endswith(agent_tail["data"])
+
+        # 通过中心服务验证 gzip 与 tail + end 无损拼回全文
+        r1 = client.get(f"/api/jobs/{job['id']}/log", params={"tail": 32768}, headers={"Accept-Encoding": "gzip"})
+        assert r1.status_code == 200 and r1.headers.get("content-encoding") == "gzip"
+        d1 = r1.json()
+        assert d1["next_offset"] == total_size and d1["offset"] > 0
+        chunks = [d1["data"]]
+        cur_end = d1["offset"]
+        while cur_end > 0:
+            r = client.get(f"/api/jobs/{job['id']}/log", params={"tail": 32768, "end": cur_end})
+            assert r.status_code == 200
+            d = r.json()
+            assert d["next_offset"] == cur_end
+            chunks.append(d["data"])
+            cur_end = d["offset"]
+        chunks.reverse()
+        assert "".join(chunks) == full_text
