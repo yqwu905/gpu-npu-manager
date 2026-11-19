@@ -15,6 +15,7 @@ const LINKS = [
 export default function Layout({ children }: { children: ReactNode }) {
   const sched = usePoll(() => jobsApi.scheduler(), [], 30_000)
   const schedMock = useMock('scheduler')
+  const schedText = schedMock ? '每 5 秒扫描队列' : sched.data ? (sched.data.strict_order ? '严格按顺序' : '回填模式') : '加载中'
   // 侧栏默认折叠成图标，悬停时展开
   return (
     <div className="app compact">
@@ -24,17 +25,17 @@ export default function Layout({ children }: { children: ReactNode }) {
           <span className="side-label">算力平台</span>
         </div>
         {LINKS.map((l) => (
-          <NavLink key={l.to} to={l.to} end={l.to === '/'} className={({ isActive }) => (isActive ? 'nav on' : 'nav')}>
+          <NavLink key={l.to} to={l.to} end={l.to === '/'} title={l.name} className={({ isActive }) => (isActive ? 'nav on' : 'nav')}>
             {l.icon}
             <span className="side-label">{l.name}</span>
           </NavLink>
         ))}
         <div className="side-foot">
-          <div className="row" style={{ fontSize: 13, fontWeight: 500 }}>
+          <div className="row" style={{ fontSize: 13, fontWeight: 550 }}>
             <span className="dot" style={{ background: '#2E8B57' }} />
-            调度器
+            <span className="ellipsis">调度器</span>
           </div>
-          <div className="lbl">{schedMock ? '每 5 秒扫描队列' : sched.data ? (sched.data.strict_order ? '严格按顺序' : '回填模式') : '加载中'}</div>
+          <div className="lbl ellipsis" title={schedText}>{schedText}</div>
         </div>
       </nav>
       {children}

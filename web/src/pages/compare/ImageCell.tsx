@@ -92,13 +92,13 @@ function ImageCell({ id, name, onRename, color, focus, mismatch, count, ix, i, p
   return (
     // data-pic 为当前图；画布上的 data-pic 是实际画出的图，两者不同时画面还是上一张（最多 100 ms）或按住对比中
     <figure className="card cmp-cell" data-id={id} data-pic={ix?.n ? `${id}:${i}` : undefined} style={{ boxShadow: focus ? `0 0 0 2px ${color}` : undefined }}>
-      <figcaption className="row" style={{ gap: 8, padding: '8px 10px', borderTop: `3px solid ${color}`, borderBottom: '1px solid var(--border-soft)' }}>
-        <button type="button" className="cmp-name-btn" onClick={() => onFocus(id)} aria-label={`以 ${name} 为对齐基准`}>
+      <figcaption className="row cmp-cell-head" style={{ borderTop: `3px solid ${color}`, borderBottom: '1px solid var(--border-soft)' }}>
+        <button type="button" className="cmp-name-btn" onClick={() => onFocus(id)} aria-label={`以 ${name} 为对齐基准`} title={name}>
           <span className="dot" style={{ width: 10, height: 10, background: color }} />
           <span className="mono ellipsis" style={{ fontSize: 13, fontWeight: 500 }}>{name}</span>
         </button>
         {editing ? <input className="inp" autoFocus aria-label="图片显示名称" value={draft}
-          style={{ minWidth: 0, width: 150, height: 28 }}
+          style={{ minWidth: 0, width: 140, height: 28 }}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={() => { onRename(draft); setEditing(false) }}
           onKeyDown={(e) => {
@@ -108,8 +108,8 @@ function ImageCell({ id, name, onRename, color, focus, mismatch, count, ix, i, p
           aria-label={`修改 ${name} 的显示名称`} title="仅修改图片上方的显示名称"
           onClick={() => { setDraft(name); setEditing(true) }}>✎</button>}
         <span className="grow" />
-        {mismatch && <span className="badge" style={{ background: '#FFF4D6', color: '#5C3F00' }}>编号不一致</span>}
-        <span className="mono lbl">{count}</span>
+        {mismatch && <span className="badge cmp-mismatch" style={{ background: '#FFF4D6', color: '#5C3F00' }} title="当前文件序号与对齐基准不一致">编号不一致</span>}
+        <span className="mono lbl nowrap shrink-0">{count}</span>
       </figcaption>
       <div className="cmp-image-area">
         <div ref={vp} data-viewport="1" className="cmp-vp">
@@ -121,16 +121,17 @@ function ImageCell({ id, name, onRename, color, focus, mismatch, count, ix, i, p
           </div>
           <div ref={holding} className="cmp-holding" hidden>
             <span ref={holdDot} className="dot" />
-            正在显示 <span ref={holdName} />
+            正在显示 <span ref={holdName} className="ellipsis" />
           </div>
           <div ref={btns} className="cmp-hold-btns">
             {peers.map((o) => (
               <button key={o.id} type="button" className="cmp-hold"
                 onPointerDown={(e) => holdOn(o, e.currentTarget)} onPointerUp={holdOff} onPointerLeave={holdOff}
                 onKeyDown={holdKey(o)} onKeyUp={holdOff} onBlur={holdOff}
+                title={o.name}
                 aria-label={`按住查看 ${o.name} 的当前图`}>
-                <span className="dot" style={{ width: 10, height: 10, background: o.color, boxShadow: '0 0 0 1.5px #FFFFFF' }} />
-                <span className="ellipsis" style={{ maxWidth: 120 }}>{o.name}</span>
+                <span className="dot" style={{ width: 9, height: 9, background: o.color, boxShadow: '0 0 0 1.5px #FFFFFF' }} />
+                <span className="ellipsis">{o.name}</span>
               </button>
             ))}
           </div>
@@ -138,7 +139,7 @@ function ImageCell({ id, name, onRename, color, focus, mismatch, count, ix, i, p
       </div>
       <div className="row cmp-cell-footer" style={{ gap: 8, padding: '8px 10px' }}>
         <span ref={fileEl} className="mono ellipsis grow" style={{ fontSize: 12 }} />
-        {peers.length > 0 && <span className="lbl" style={{ whiteSpace: 'nowrap' }}>按住右下角按钮切换</span>}
+        {peers.length > 0 && <span className="lbl nowrap cmp-footer-hint">按住右下角按钮切换</span>}
       </div>
     </figure>
   )

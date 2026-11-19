@@ -294,7 +294,7 @@ function CompareImages({ ids, nameOf, colorOf }: Props) {
           <span className="row" style={{ gap: 6 }}><kbd className="kbd">滚轮</kbd>同步缩放</span>
           <span className="row" style={{ gap: 6 }}><kbd className="kbd">拖动</kbd>同步平移</span>
           <span className="grow" />
-          <span role="status" className="mono" style={{ color: 'var(--ink)' }}>{status || '点击缩略图切换图片'}</span>
+          <span role="status" className="mono ellipsis" style={{ color: 'var(--ink)', maxWidth: 420 }} title={status || '点击缩略图切换图片'}>{status || '点击缩略图切换图片'}</span>
         </div>
 
         <div className="row wrap" style={{ gap: 8 }}>
